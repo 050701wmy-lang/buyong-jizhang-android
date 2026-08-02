@@ -43,6 +43,7 @@ import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.anim.folmeSpring
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -622,122 +623,73 @@ fun StatisticsScreen(
 }
 
 /**
- * 展示当前版本的外观、数据与智能记账配置摘要。
+ * 展示外观与跟随系统配色设置。
  */
 @Composable
 fun SettingsScreen(
     uiState: AccountingUiState,
-    innerPadding: PaddingValues,
+    backdrop: LayerBackdrop,
+    onBack: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
 ) {
     var showThemePopup by rememberSaveable { mutableStateOf(false) }
-    MainTabList(innerPadding = innerPadding) {
-        item {
-            SectionTitle(text = "通用")
-        }
-        item {
-            Card(
-                modifier = Modifier
-                    .padding(horizontal = 12.dp)
-                    .padding(bottom = 12.dp),
-                insideMargin = PaddingValues(0.dp),
-            ) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    BasicComponent(
-                        title = "外观",
+    SecondaryScaffold(
+        title = "设置",
+        backdrop = backdrop,
+        onBack = onBack,
+    ) { innerPadding ->
+        SecondaryList(innerPadding = innerPadding) {
+            item {
+                SectionTitle(text = "通用")
+            }
+            item {
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        BasicComponent(
+                            title = "外观",
+                            modifier = Modifier.fillMaxWidth(),
+                            endActions = {
+                                Text(
+                                    text = accountingThemeModeTitle(uiState.themeMode),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.body2,
+                                )
+                                Icon(
+                                    imageVector = MiuixIcons.Basic.ArrowUpDown,
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .padding(start = 6.dp)
+                                        .size(width = 10.dp, height = 16.dp),
+                                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            },
+                            onClick = { showThemePopup = true },
+                        )
+                        AccountingThemeModePopup(
+                            show = showThemePopup,
+                            selectedMode = uiState.themeMode,
+                            onDismiss = { showThemePopup = false },
+                            onSelect = {
+                                onThemeModeChange(it)
+                                showThemePopup = false
+                            },
+                        )
+                    }
+                    SwitchPreference(
+                        checked = uiState.followSystemColor,
+                        onCheckedChange = onFollowSystemColorChange,
+                        title = "跟随系统配色",
+                        summary = "关闭后使用固定品牌配色",
                         modifier = Modifier.fillMaxWidth(),
-                        endActions = {
-                            Text(
-                                text = accountingThemeModeTitle(uiState.themeMode),
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                style = MiuixTheme.textStyles.body2,
-                            )
-                            Icon(
-                                imageVector = MiuixIcons.Basic.ArrowUpDown,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .padding(start = 6.dp)
-                                    .size(width = 10.dp, height = 16.dp),
-                                tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
-                        },
-                        onClick = { showThemePopup = true },
-                    )
-                    AccountingThemeModePopup(
-                        show = showThemePopup,
-                        selectedMode = uiState.themeMode,
-                        onDismiss = { showThemePopup = false },
-                        onSelect = {
-                            onThemeModeChange(it)
-                            showThemePopup = false
-                        },
                     )
                 }
-                BasicComponent(
-                    title = "货币",
-                    modifier = Modifier.fillMaxWidth(),
-                    endActions = {
-                        Text(
-                            text = "人民币（CNY）",
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.body2,
-                        )
-                    },
-                )
-                SwitchPreference(
-                    checked = uiState.followSystemColor,
-                    onCheckedChange = onFollowSystemColorChange,
-                    title = "跟随系统配色",
-                    summary = "关闭后使用固定品牌配色",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                BasicComponent(
-                    title = "数据存储",
-                    modifier = Modifier.fillMaxWidth(),
-                    endActions = {
-                        Text(
-                            text = "仅保存在本机",
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.body2,
-                        )
-                    },
-                )
             }
-        }
-        item {
-            SectionTitle(text = "数据保护")
-        }
-        item {
-            SettingsGroup(
-                rows = listOf(
-                    "系统备份" to "已关闭",
-                    "卸载应用" to "将删除本地账本",
-                    "应用内备份" to "后续版本提供",
-                ),
-            )
-        }
-        item {
-            SectionTitle(text = "智能记账")
-        }
-        item {
-            SettingsGroup(
-                rows = listOf(
-                    "解析方式" to "本地自然语言",
-                    "写入规则" to "确认草稿后入账",
-                ),
-            )
-        }
-        item {
-            Text(
-                text = "随记 0.1.0",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                textAlign = TextAlign.Center,
-                style = MiuixTheme.textStyles.footnote1,
-            )
         }
     }
 }
@@ -962,35 +914,3 @@ private fun EmptyCard(text: String) {
     }
 }
 
-/**
- * 以一个连续 Card 展示设置名称和值。
- */
-@Composable
-private fun SettingsGroup(rows: List<Pair<String, String>>) {
-    Card(
-        modifier = Modifier
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
-        insideMargin = PaddingValues(0.dp),
-    ) {
-        rows.forEachIndexed { index, row ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 15.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(text = row.first)
-                Text(
-                    text = row.second,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    style = MiuixTheme.textStyles.body2,
-                )
-            }
-            if (index < rows.lastIndex) {
-                HorizontalDivider(modifier = Modifier.padding(start = 16.dp))
-            }
-        }
-    }
-}

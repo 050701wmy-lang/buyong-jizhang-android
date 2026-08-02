@@ -60,7 +60,7 @@ internal val TOP_BAR_ACTION_END_PADDING = 20.dp
 internal val TOP_BAR_ACTION_SPACING = 5.dp
 
 /**
- * 表示四个一级功能标签。
+ * 表示三个一级功能标签。
  */
 enum class MainTab(
     val title: String,
@@ -69,7 +69,6 @@ enum class MainTab(
     HOME("首页", MiuixIcons.Home),
     DETAILS("明细", MiuixIcons.ListView),
     STATISTICS("报表", MiuixIcons.GridView),
-    SETTINGS("设置", MiuixIcons.Settings),
     ;
 
     /**
@@ -90,8 +89,7 @@ fun MainShell(
     onOpenTransactionEdit: (Long) -> Unit,
     onOpenAccount: (Long) -> Unit,
     onAddAccount: () -> Unit,
-    onThemeModeChange: (AccountingThemeMode) -> Unit,
-    onFollowSystemColorChange: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -103,7 +101,7 @@ fun MainShell(
                     state = navigationRailState,
                     showDivider = false,
                 ) {
-                    MainTab.entries.filterNot { it == MainTab.SETTINGS }.forEach { tab ->
+                    MainTab.entries.forEach { tab ->
                         NavigationRailItem(
                             selected = selectedTab == tab,
                             onClick = { selectedTab = tab },
@@ -123,8 +121,7 @@ fun MainShell(
                     onOpenTransactionEdit = onOpenTransactionEdit,
                     onAddAccount = onAddAccount,
                     onOpenAccount = onOpenAccount,
-                    onThemeModeChange = onThemeModeChange,
-                    onFollowSystemColorChange = onFollowSystemColorChange,
+                    onOpenSettings = onOpenSettings,
                 )
             }
         } else {
@@ -139,8 +136,7 @@ fun MainShell(
                 onOpenTransactionEdit = onOpenTransactionEdit,
                 onAddAccount = onAddAccount,
                 onOpenAccount = onOpenAccount,
-                onThemeModeChange = onThemeModeChange,
-                onFollowSystemColorChange = onFollowSystemColorChange,
+                onOpenSettings = onOpenSettings,
             )
         }
     }
@@ -161,8 +157,7 @@ private fun MainScaffold(
     onOpenTransactionEdit: (Long) -> Unit,
     onAddAccount: () -> Unit,
     onOpenAccount: (Long) -> Unit,
-    onThemeModeChange: (AccountingThemeMode) -> Unit,
-    onFollowSystemColorChange: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     Scaffold(
@@ -180,7 +175,7 @@ private fun MainScaffold(
                                 MainAddAccountAction(onClick = onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
-                            MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
+                            MainSettingsAction(onClick = onOpenSettings)
                         },
                     )
                 } else {
@@ -194,7 +189,7 @@ private fun MainScaffold(
                                 MainAddAccountAction(onClick = onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
-                            MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
+                            MainSettingsAction(onClick = onOpenSettings)
                         },
                     )
                 }
@@ -207,7 +202,7 @@ private fun MainScaffold(
                     color = Color.Transparent,
                     showDivider = false,
                 ) {
-                    MainTab.entries.filterNot { it == MainTab.SETTINGS }.forEach { tab ->
+                    MainTab.entries.forEach { tab ->
                         NavigationBarItem(
                             selected = selectedTab == tab,
                             onClick = { onSelectTab(tab) },
@@ -258,12 +253,6 @@ private fun MainScaffold(
                         innerPadding = innerPadding,
                     )
 
-                    MainTab.SETTINGS -> SettingsScreen(
-                        uiState = uiState,
-                        innerPadding = innerPadding,
-                        onThemeModeChange = onThemeModeChange,
-                        onFollowSystemColorChange = onFollowSystemColorChange,
-                    )
                 }
             }
         }

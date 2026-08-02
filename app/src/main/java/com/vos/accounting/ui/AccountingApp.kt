@@ -65,6 +65,12 @@ data class AccountEditorRoute(
 ) : AccountingRoute
 
 /**
+ * 表示应用设置二级页面。
+ */
+@Serializable
+data object SettingsRoute : AccountingRoute
+
+/**
  * 表示 AI 智能记账二级页面。
  */
 @Serializable
@@ -121,12 +127,7 @@ fun AccountingApp() {
                             onOpenTransactionEdit = { backStack.add(TransactionEditRoute(it)) },
                             onOpenAccount = { backStack.add(AccountDetailRoute(it)) },
                             onAddAccount = { backStack.add(AccountEditorRoute()) },
-                            onThemeModeChange = {
-                                viewModel.updateSettings(it, uiState.followSystemColor)
-                            },
-                            onFollowSystemColorChange = {
-                                viewModel.updateSettings(uiState.themeMode, it)
-                            },
+                            onOpenSettings = { backStack.add(SettingsRoute) },
                         )
                     }
                     entry<ManualEntryRoute> { route ->
@@ -194,6 +195,19 @@ fun AccountingApp() {
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onSave = viewModel::saveAccount,
                             onArchive = viewModel::archiveAccount,
+                        )
+                    }
+                    entry<SettingsRoute> {
+                        SettingsScreen(
+                            uiState = uiState,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onThemeModeChange = {
+                                viewModel.updateSettings(it, uiState.followSystemColor)
+                            },
+                            onFollowSystemColorChange = {
+                                viewModel.updateSettings(uiState.themeMode, it)
+                            },
                         )
                     }
                     entry<AiEntryRoute> {

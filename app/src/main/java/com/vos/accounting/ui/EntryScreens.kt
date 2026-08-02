@@ -2196,7 +2196,7 @@ fun AiEntryScreen(
  * 建立不显示主导航的二级页面 Scaffold。
  */
 @Composable
-private fun SecondaryScaffold(
+internal fun SecondaryScaffold(
     title: String,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
@@ -2256,7 +2256,7 @@ private fun SecondaryScaffold(
  * 建立仅使用顶栏 padding 并自行处理底部导航安全区的二级页列表。
  */
 @Composable
-private fun SecondaryList(
+internal fun SecondaryList(
     innerPadding: PaddingValues,
     content: LazyListScope.() -> Unit,
 ) {
