@@ -64,6 +64,19 @@ data class CategoryEntity(
 )
 
 /**
+ * 表示应用外观设置的单行配置。
+ */
+@Entity(tableName = "app_settings")
+data class AppSettingsEntity(
+    @PrimaryKey
+    val id: Int = 1,
+    @ColumnInfo(name = "theme_mode")
+    val themeMode: String = "SYSTEM",
+    @ColumnInfo(name = "follow_system_color")
+    val followSystemColor: Boolean = true,
+)
+
+/**
  * 表示数据库中的单笔账目。
  */
 @Entity(
@@ -189,6 +202,24 @@ interface AccountingDao {
         """,
     )
     fun observeExpenseCategoryTotals(): Flow<List<CategoryTotal>>
+
+    /**
+     * 持续观察应用外观设置。
+     */
+    @Query("SELECT * FROM app_settings WHERE id = 1")
+    fun observeSettings(): Flow<AppSettingsEntity?>
+
+    /**
+     * 写入应用外观设置。
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSettings(settings: AppSettingsEntity)
+
+    /**
+     * 返回设置行数量。
+     */
+    @Query("SELECT COUNT(*) FROM app_settings")
+    suspend fun countSettings(): Int
 
     /**
      * 返回指定账户，找不到时返回空。
@@ -368,6 +399,9 @@ interface AccountingDao {
             )
         }
         ensureDefaultAccount()
+        if (countSettings() == 0) {
+            upsertSettings(AppSettingsEntity())
+        }
         if (countCategories() == 0) {
             insertCategories(
                 listOf(
@@ -389,8 +423,13 @@ interface AccountingDao {
  * 提供应用的 Room 数据库。
  */
 @Database(
-    entities = [AccountEntity::class, CategoryEntity::class, TransactionEntity::class],
-    version = 2,
+    entities = [
+        AccountEntity::class,
+        CategoryEntity::class,
+        TransactionEntity::class,
+        AppSettingsEntity::class,
+    ],
+    version = 3,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -407,7 +446,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             context,
             AccountingDatabase::class.java,
             "accounting.db",
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             /**
@@ -442,6 +481,20 @@ abstract class AccountingDatabase : RoomDatabase() {
                         ELSE 'more'
                     END
                     """.trimIndent(),
+                )
+            }
+        }
+
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            /**
+             * 建立应用外观设置表并写入默认值。
+             */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "CREATE TABLE IF NOT EXISTS `app_settings` (`id` INTEGER NOT NULL, `theme_mode` TEXT NOT NULL, `follow_system_color` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                )
+                connection.executeMigrationSql(
+                    "INSERT OR REPLACE INTO `app_settings` (`id`, `theme_mode`, `follow_system_color`) VALUES (1, 'SYSTEM', 1)",
                 )
             }
         }

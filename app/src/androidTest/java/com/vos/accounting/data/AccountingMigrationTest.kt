@@ -55,6 +55,37 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /**
+     * 验证 v2 升级后建立应用外观设置表并写入默认值。
+     */
+    @Test
+    fun migrateVersionTwoToVersionThree() {
+        helper.createDatabase(DATABASE_NAME, 2).apply {
+            execSQL(
+                "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order, is_default, is_archived) " +
+                    "VALUES (1, '现金', 'CASH', 5000, 0, 1, 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            3,
+            true,
+            AccountingDatabase.MIGRATION_2_3,
+        )
+        migrated.query("SELECT theme_mode, follow_system_color FROM app_settings WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals("SYSTEM", it.getString(0))
+            assertEquals(1, it.getInt(1))
+        }
+        migrated.query("SELECT COUNT(*) FROM app_settings").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        migrated.close()
+    }
+
     private companion object {
         const val DATABASE_NAME = "accounting_migration_test"
     }

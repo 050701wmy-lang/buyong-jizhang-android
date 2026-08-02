@@ -1710,7 +1710,7 @@ private fun AccountTypePopup(
  * 展示可复用的 HyperOS 弹出单选项。
  */
 @Composable
-private fun PopupSelectionRow(
+internal fun PopupSelectionRow(
     title: String,
     summary: String?,
     selected: Boolean,

@@ -1,6 +1,7 @@
 package com.vos.accounting.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,15 +41,23 @@ import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.anim.folmeSpring
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.ListPopupColumn
+import top.yukonga.miuix.kmp.basic.ListPopupDefaults
+import top.yukonga.miuix.kmp.basic.PopupPositionProvider
+import top.yukonga.miuix.kmp.window.WindowListPopup
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -103,6 +112,7 @@ fun HomeScreen(
             if (accounts.isNotEmpty()) {
                 item(key = type.name) {
                     HomeAccountGroup(
+                        modifier = Modifier.animateItem(),
                         type = type,
                         accounts = accounts,
                         balances = accountBalances,
@@ -196,14 +206,20 @@ private fun HomeAssetCard(
  */
 @Composable
 private fun HomeAccountGroup(
+    modifier: Modifier = Modifier,
     type: AccountType,
     accounts: List<AccountEntity>,
     balances: Map<AccountEntity, Long>,
     onOpenAccount: (Long) -> Unit,
 ) {
     var expanded by rememberSaveable(type.name) { mutableStateOf(true) }
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) -90f else 90f,
+        animationSpec = folmeSpring(damping = 1f, response = 0.35f),
+        label = "accountGroupArrow",
+    )
     Card(
-        modifier = Modifier
+        modifier = modifier
             .padding(horizontal = 12.dp)
             .padding(bottom = 12.dp),
         insideMargin = PaddingValues(0.dp),
@@ -232,7 +248,7 @@ private fun HomeAccountGroup(
                 contentDescription = if (expanded) "收起${accountTypeTitle(type)}" else "展开${accountTypeTitle(type)}",
                 modifier = Modifier
                     .padding(start = 6.dp)
-                    .rotate(if (expanded) -90f else 90f)
+                    .rotate(arrowRotation)
                     .size(18.dp),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -609,19 +625,85 @@ fun StatisticsScreen(
  * 展示当前版本的外观、数据与智能记账配置摘要。
  */
 @Composable
-fun SettingsScreen(innerPadding: PaddingValues) {
+fun SettingsScreen(
+    uiState: AccountingUiState,
+    innerPadding: PaddingValues,
+    onThemeModeChange: (AccountingThemeMode) -> Unit,
+    onFollowSystemColorChange: (Boolean) -> Unit,
+) {
+    var showThemePopup by rememberSaveable { mutableStateOf(false) }
     MainTabList(innerPadding = innerPadding) {
         item {
             SectionTitle(text = "通用")
         }
         item {
-            SettingsGroup(
-                rows = listOf(
-                    "货币" to "人民币（CNY）",
-                    "外观" to "跟随系统",
-                    "数据存储" to "仅保存在本机",
-                ),
-            )
+            Card(
+                modifier = Modifier
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 12.dp),
+                insideMargin = PaddingValues(0.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    BasicComponent(
+                        title = "外观",
+                        modifier = Modifier.fillMaxWidth(),
+                        endActions = {
+                            Text(
+                                text = accountingThemeModeTitle(uiState.themeMode),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                style = MiuixTheme.textStyles.body2,
+                            )
+                            Icon(
+                                imageVector = MiuixIcons.Basic.ArrowUpDown,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .padding(start = 6.dp)
+                                    .size(width = 10.dp, height = 16.dp),
+                                tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            )
+                        },
+                        onClick = { showThemePopup = true },
+                    )
+                    AccountingThemeModePopup(
+                        show = showThemePopup,
+                        selectedMode = uiState.themeMode,
+                        onDismiss = { showThemePopup = false },
+                        onSelect = {
+                            onThemeModeChange(it)
+                            showThemePopup = false
+                        },
+                    )
+                }
+                BasicComponent(
+                    title = "货币",
+                    modifier = Modifier.fillMaxWidth(),
+                    endActions = {
+                        Text(
+                            text = "人民币（CNY）",
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            style = MiuixTheme.textStyles.body2,
+                        )
+                    },
+                )
+                SwitchPreference(
+                    checked = uiState.followSystemColor,
+                    onCheckedChange = onFollowSystemColorChange,
+                    title = "跟随系统配色",
+                    summary = "关闭后使用固定品牌配色",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                BasicComponent(
+                    title = "数据存储",
+                    modifier = Modifier.fillMaxWidth(),
+                    endActions = {
+                        Text(
+                            text = "仅保存在本机",
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            style = MiuixTheme.textStyles.body2,
+                        )
+                    },
+                )
+            }
         }
         item {
             SectionTitle(text = "数据保护")
@@ -656,6 +738,53 @@ fun SettingsScreen(innerPadding: PaddingValues) {
                 textAlign = TextAlign.Center,
                 style = MiuixTheme.textStyles.footnote1,
             )
+        }
+    }
+}
+
+/**
+ * 返回外观模式的展示文案。
+ */
+private fun accountingThemeModeTitle(mode: AccountingThemeMode): String = when (mode) {
+    AccountingThemeMode.SYSTEM -> "跟随系统"
+    AccountingThemeMode.LIGHT -> "浅色"
+    AccountingThemeMode.DARK -> "深色"
+}
+
+/**
+ * 以 HyperOS 风格弹出列表展示可选外观模式。
+ */
+@Composable
+private fun AccountingThemeModePopup(
+    show: Boolean,
+    selectedMode: AccountingThemeMode,
+    onDismiss: () -> Unit,
+    onSelect: (AccountingThemeMode) -> Unit,
+) {
+    WindowListPopup(
+        show = show,
+        popupPositionProvider = ListPopupDefaults.dropdownPositionProvider(
+            horizontalMargin = 12.dp,
+        ),
+        alignment = PopupPositionProvider.Align.End,
+        enableWindowDim = true,
+        onDismissRequest = onDismiss,
+        maxHeight = 440.dp,
+        minWidth = 288.dp,
+    ) {
+        ListPopupColumn {
+            AccountingThemeMode.entries.forEach { mode ->
+                PopupSelectionRow(
+                    title = accountingThemeModeTitle(mode),
+                    summary = when (mode) {
+                        AccountingThemeMode.SYSTEM -> "跟随系统明暗设置"
+                        AccountingThemeMode.LIGHT -> "始终使用浅色外观"
+                        AccountingThemeMode.DARK -> "始终使用深色外观"
+                    },
+                    selected = mode == selectedMode,
+                    onClick = { onSelect(mode) },
+                )
+            }
         }
     }
 }

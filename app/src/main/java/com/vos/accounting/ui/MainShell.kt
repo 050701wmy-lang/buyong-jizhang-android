@@ -14,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -89,6 +90,8 @@ fun MainShell(
     onOpenTransactionEdit: (Long) -> Unit,
     onOpenAccount: (Long) -> Unit,
     onAddAccount: () -> Unit,
+    onThemeModeChange: (AccountingThemeMode) -> Unit,
+    onFollowSystemColorChange: (Boolean) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -120,6 +123,8 @@ fun MainShell(
                     onOpenTransactionEdit = onOpenTransactionEdit,
                     onAddAccount = onAddAccount,
                     onOpenAccount = onOpenAccount,
+                    onThemeModeChange = onThemeModeChange,
+                    onFollowSystemColorChange = onFollowSystemColorChange,
                 )
             }
         } else {
@@ -134,6 +139,8 @@ fun MainShell(
                 onOpenTransactionEdit = onOpenTransactionEdit,
                 onAddAccount = onAddAccount,
                 onOpenAccount = onOpenAccount,
+                onThemeModeChange = onThemeModeChange,
+                onFollowSystemColorChange = onFollowSystemColorChange,
             )
         }
     }
@@ -154,6 +161,8 @@ private fun MainScaffold(
     onOpenTransactionEdit: (Long) -> Unit,
     onAddAccount: () -> Unit,
     onOpenAccount: (Long) -> Unit,
+    onThemeModeChange: (AccountingThemeMode) -> Unit,
+    onFollowSystemColorChange: (Boolean) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     Scaffold(
@@ -228,26 +237,34 @@ private fun MainScaffold(
         },
         floatingActionButtonPosition = FabPosition.End,
     ) { innerPadding ->
+        val saveableStateHolder = rememberSaveableStateHolder()
         Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-            when (selectedTab) {
-                MainTab.HOME -> HomeScreen(
-                    uiState = uiState,
-                    innerPadding = innerPadding,
-                    onOpenAccount = onOpenAccount,
-                )
+            saveableStateHolder.SaveableStateProvider(selectedTab) {
+                when (selectedTab) {
+                    MainTab.HOME -> HomeScreen(
+                        uiState = uiState,
+                        innerPadding = innerPadding,
+                        onOpenAccount = onOpenAccount,
+                    )
 
-                MainTab.DETAILS -> DetailsScreen(
-                    uiState = uiState,
-                    innerPadding = innerPadding,
-                    onEditTransaction = onOpenTransactionEdit,
-                )
+                    MainTab.DETAILS -> DetailsScreen(
+                        uiState = uiState,
+                        innerPadding = innerPadding,
+                        onEditTransaction = onOpenTransactionEdit,
+                    )
 
-                MainTab.STATISTICS -> StatisticsScreen(
-                    uiState = uiState,
-                    innerPadding = innerPadding,
-                )
+                    MainTab.STATISTICS -> StatisticsScreen(
+                        uiState = uiState,
+                        innerPadding = innerPadding,
+                    )
 
-                MainTab.SETTINGS -> SettingsScreen(innerPadding = innerPadding)
+                    MainTab.SETTINGS -> SettingsScreen(
+                        uiState = uiState,
+                        innerPadding = innerPadding,
+                        onThemeModeChange = onThemeModeChange,
+                        onFollowSystemColorChange = onFollowSystemColorChange,
+                    )
+                }
             }
         }
     }
@@ -319,7 +336,7 @@ fun Modifier.accountingBarBlur(backdrop: LayerBackdrop): Modifier =
             backdrop = backdrop,
             shape = RectangleShape,
             blurRadius = 24f,
-        )
+        ).background(MiuixTheme.colorScheme.surface.copy(alpha = 0.8f))
     } else {
         background(MiuixTheme.colorScheme.surface)
     }

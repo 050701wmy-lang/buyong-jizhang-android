@@ -40,6 +40,8 @@ data class AccountingUiState(
     val aiError: String? = null,
     val writeInProgress: Boolean = false,
     val writeError: String? = null,
+    val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
+    val followSystemColor: Boolean = true,
 )
 
 /**
@@ -69,12 +71,22 @@ class AccountingViewModel(
         )
     }
 
-    val uiState = combine(ledgerState, aiDraft, aiError, writeState) { ledger, draft, error, write ->
+    val uiState = combine(
+        ledgerState,
+        repository.settings,
+        aiDraft,
+        aiError,
+        writeState,
+    ) { ledger, settings, draft, error, write ->
         ledger.copy(
             aiDraft = draft,
             aiError = error,
             writeInProgress = write.inProgress,
             writeError = write.error,
+            themeMode = settings?.themeMode?.let { mode ->
+                AccountingThemeMode.entries.firstOrNull { it.name == mode }
+            } ?: AccountingThemeMode.SYSTEM,
+            followSystemColor = settings?.followSystemColor ?: true,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -120,6 +132,18 @@ class AccountingViewModel(
      */
     fun clearWriteError() {
         writeState.value = writeState.value.copy(error = null)
+    }
+
+    /**
+     * 更新应用外观设置。
+     */
+    fun updateSettings(
+        themeMode: AccountingThemeMode,
+        followSystemColor: Boolean,
+    ) {
+        viewModelScope.launch {
+            repository.saveSettings(themeMode.name, followSystemColor)
+        }
     }
 
     /**

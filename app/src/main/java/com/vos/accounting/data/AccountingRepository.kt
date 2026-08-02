@@ -19,12 +19,29 @@ class AccountingRepository(
     val transactions = dao.observeTransactions()
     val overviewTotals = dao.observeOverviewTotals()
     val expenseCategoryTotals = dao.observeExpenseCategoryTotals()
+    val settings = dao.observeSettings()
 
     /**
      * 建立首次启动所需的默认账本数据。
      */
     suspend fun initialize() {
         dao.seedDefaults()
+    }
+
+    /**
+     * 写入应用外观设置。
+     */
+    suspend fun saveSettings(
+        themeMode: String,
+        followSystemColor: Boolean,
+    ) {
+        dao.upsertSettings(
+            AppSettingsEntity(
+                id = 1,
+                themeMode = themeMode,
+                followSystemColor = followSystemColor,
+            ),
+        )
     }
 
     /**

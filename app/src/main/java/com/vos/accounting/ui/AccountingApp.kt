@@ -1,9 +1,9 @@
 package com.vos.accounting.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -13,13 +13,12 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
+import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
 import com.vos.accounting.model.TransactionType
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.darkColorScheme
-import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 /**
  * 表示应用的 Navigation 3 页面键。
@@ -83,14 +82,30 @@ fun AccountingApp() {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val backStack = rememberNavBackStack(MainRoute)
 
-    MiuixTheme(
-        colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
+    // 统一管理页面转场：新页从右侧进入、来源页左退压暗、预测返回跟随手势。
+    val transitionEffects = remember {
+        NavDisplayTransitionEffects(
+            enableCornerClip = true,
+            dimAmount = 0.5f,
+            blockInputDuringTransition = true,
+            popDirectionFollowsSwipeEdge = true,
+        )
+    }
+
+    AccountingTheme(
+        themeMode = uiState.themeMode,
+        followSystemColor = uiState.followSystemColor,
     ) {
-        val backdrop = rememberLayerBackdrop()
+        val surfaceColor = MiuixTheme.colorScheme.surface
+        val backdrop = rememberLayerBackdrop {
+            drawRect(surfaceColor)
+            drawContent()
+        }
         Box(
             modifier = Modifier.fillMaxSize(),
         ) {
             NavDisplay(
+                transitionEffects = transitionEffects,
                 backStack = backStack,
                 onBack = {
                     if (backStack.size > 1) {
@@ -106,6 +121,12 @@ fun AccountingApp() {
                             onOpenTransactionEdit = { backStack.add(TransactionEditRoute(it)) },
                             onOpenAccount = { backStack.add(AccountDetailRoute(it)) },
                             onAddAccount = { backStack.add(AccountEditorRoute()) },
+                            onThemeModeChange = {
+                                viewModel.updateSettings(it, uiState.followSystemColor)
+                            },
+                            onFollowSystemColorChange = {
+                                viewModel.updateSettings(uiState.themeMode, it)
+                            },
                         )
                     }
                     entry<ManualEntryRoute> { route ->
