@@ -1,5 +1,6 @@
 package com.vos.accounting.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,10 +22,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,7 +46,7 @@ import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.ExpandMore
+import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.time.Instant
@@ -195,6 +201,7 @@ private fun HomeAccountGroup(
     balances: Map<AccountEntity, Long>,
     onOpenAccount: (Long) -> Unit,
 ) {
+    var expanded by rememberSaveable(type.name) { mutableStateOf(true) }
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -205,6 +212,7 @@ private fun HomeAccountGroup(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = GROUPED_CARD_HEADER_MIN_HEIGHT)
+                .clickable { expanded = !expanded }
                 .padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -220,21 +228,28 @@ private fun HomeAccountGroup(
                 style = MiuixTheme.textStyles.body2,
             )
             Icon(
-                imageVector = MiuixIcons.ExpandMore,
-                contentDescription = null,
+                imageVector = MiuixIcons.ChevronForward,
+                contentDescription = if (expanded) "收起${accountTypeTitle(type)}" else "展开${accountTypeTitle(type)}",
                 modifier = Modifier
                     .padding(start = 6.dp)
+                    .rotate(if (expanded) -90f else 90f)
                     .size(18.dp),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
         }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING))
-        accounts.forEach { account ->
-            HomeAccountRow(
-                account = account,
-                balance = balances.getValue(account),
-                onClick = { onOpenAccount(account.id) },
-            )
+        AnimatedVisibility(visible = expanded) {
+            Column {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING),
+                )
+                accounts.forEach { account ->
+                    HomeAccountRow(
+                        account = account,
+                        balance = balances.getValue(account),
+                        onClick = { onOpenAccount(account.id) },
+                    )
+                }
+            }
         }
     }
 }

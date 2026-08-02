@@ -2,6 +2,7 @@ package com.vos.accounting.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -284,6 +285,8 @@ private fun ManualEntryContent(
     onSave: () -> Unit,
 ) {
     val layoutDirection = LocalLayoutDirection.current
+    val focusManager = LocalFocusManager.current
+    val dismissKeypadInteractionSource = remember { MutableInteractionSource() }
     var noteFocused by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = Modifier
@@ -299,21 +302,35 @@ private fun ManualEntryContent(
                 .align(Alignment.CenterHorizontally)
                 .widthIn(max = 800.dp)
                 .weight(1f)
+                .clickable(
+                    interactionSource = dismissKeypadInteractionSource,
+                    indication = null,
+                    onClick = onHideKeypad,
+                )
                 .verticalScroll(rememberScrollState()),
         ) {
             ManualTypeTabs(
                 type = type,
-                onSelectType = onSelectType,
+                onSelectType = {
+                    onHideKeypad()
+                    onSelectType(it)
+                },
             )
             ManualAmountDisplay(
                 amountExpression = amountExpression,
                 invalid = amountExpression.isNotBlank() && amountMinor == null,
-                onClick = onShowKeypad,
+                onClick = {
+                    focusManager.clearFocus()
+                    onShowKeypad()
+                },
             )
             ManualCategoryGrid(
                 categories = categories,
                 selectedId = categoryId,
-                onSelect = onSelectCategory,
+                onSelect = {
+                    onHideKeypad()
+                    onSelectCategory(it)
+                },
             )
             ManualDetailRows(
                 occurredAt = occurredAt,
@@ -321,6 +338,7 @@ private fun ManualEntryContent(
                 onOccurredAtChange = onOccurredAtChange,
                 onNoteChange = onNoteChange,
                 onNoteFocusChange = { noteFocused = it },
+                onInteraction = onHideKeypad,
             )
         }
         if (!noteFocused && keypadVisible) {
@@ -331,14 +349,14 @@ private fun ManualEntryContent(
                 saveEnabled = canSave,
                 writeInProgress = writeInProgress,
             )
-        } else if (!noteFocused && editMode) {
+        } else if (editMode) {
             ManualEditActions(
                 saveEnabled = canSave,
                 writeInProgress = writeInProgress,
                 onDelete = onDelete,
                 onSave = onSave,
             )
-        } else if (!noteFocused) {
+        } else {
             ManualSaveAction(
                 saveEnabled = canSave,
                 writeInProgress = writeInProgress,
@@ -647,6 +665,7 @@ private fun ManualDetailRows(
     onOccurredAtChange: (Long) -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onNoteFocusChange: (Boolean) -> Unit,
+    onInteraction: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
     var showDateTimePicker by rememberSaveable { mutableStateOf(false) }
@@ -660,7 +679,10 @@ private fun ManualDetailRows(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(58.dp)
-                .clickable { showDateTimePicker = true },
+                .clickable {
+                    onInteraction()
+                    showDateTimePicker = true
+                },
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
