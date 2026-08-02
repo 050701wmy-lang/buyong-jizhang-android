@@ -1,11 +1,13 @@
 package com.vos.accounting.ui
 
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +43,15 @@ import top.yukonga.miuix.kmp.icon.extended.ListView
 import top.yukonga.miuix.kmp.icon.extended.GridView
 import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+
+/** 顶栏右侧操作按钮的最小点击尺寸。 */
+internal val TOP_BAR_ACTION_BUTTON_SIZE = 35.dp
+
+/** 顶栏右侧操作图标的统一尺寸。 */
+internal val TOP_BAR_ACTION_ICON_SIZE = 24.dp
+
+/** 顶栏右侧操作按钮到屏幕边缘的留白。 */
+internal val TOP_BAR_ACTION_END_PADDING = 20.dp
 
 /**
  * 表示四个一级功能标签。
@@ -143,26 +154,28 @@ private fun MainScaffold(
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            if (isWide) {
-                SmallTopAppBar(
-                    title = selectedTab.topBarTitle,
-                    modifier = Modifier.accountingBarBlur(backdrop),
-                    color = Color.Transparent,
-                    scrollBehavior = scrollBehavior,
-                    actions = {
-                        MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
-                    },
-                )
-            } else {
-                TopAppBar(
-                    title = selectedTab.topBarTitle,
-                    modifier = Modifier.accountingBarBlur(backdrop),
-                    color = Color.Transparent,
-                    scrollBehavior = scrollBehavior,
-                    actions = {
-                        MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
-                    },
-                )
+            AccountingBlurTopBar(backdrop = backdrop) {
+                if (isWide) {
+                    SmallTopAppBar(
+                        title = selectedTab.topBarTitle,
+                        color = Color.Transparent,
+                        scrollBehavior = scrollBehavior,
+                        actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+                        actions = {
+                            MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
+                        },
+                    )
+                } else {
+                    TopAppBar(
+                        title = selectedTab.topBarTitle,
+                        color = Color.Transparent,
+                        scrollBehavior = scrollBehavior,
+                        actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+                        actions = {
+                            MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
+                        },
+                    )
+                }
             }
         },
         bottomBar = {
@@ -232,6 +245,24 @@ private fun MainScaffold(
 }
 
 /**
+ * 在独立背景层绘制顶栏模糊，避免顶栏文字动画图层参与模糊合成。
+ */
+@Composable
+internal fun AccountingBlurTopBar(
+    backdrop: LayerBackdrop,
+    content: @Composable () -> Unit,
+) {
+    Box {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .accountingBarBlur(backdrop),
+        )
+        content()
+    }
+}
+
+/**
  * 显示主页面顶栏右侧的设置入口。
  */
 @Composable
@@ -239,12 +270,13 @@ private fun MainSettingsAction(onClick: () -> Unit) {
     IconButton(
         onClick = onClick,
         backgroundColor = Color.Transparent,
-        minWidth = 35.dp,
-        minHeight = 35.dp,
+        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
+        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
     ) {
         Icon(
             imageVector = MiuixIcons.Settings,
             contentDescription = "设置",
+            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
         )
     }
 }
@@ -254,7 +286,7 @@ private fun MainSettingsAction(onClick: () -> Unit) {
  */
 @Composable
 fun Modifier.accountingBarBlur(backdrop: LayerBackdrop): Modifier =
-    if (isRuntimeShaderSupported()) {
+    if (isAccountingBlurSupported()) {
         textureBlur(
             backdrop = backdrop,
             shape = RectangleShape,
@@ -263,3 +295,9 @@ fun Modifier.accountingBarBlur(backdrop: LayerBackdrop): Modifier =
     } else {
         background(MiuixTheme.colorScheme.surface)
     }
+
+/**
+ * 判断当前系统是否能稳定绘制 MIUIX RuntimeShader 模糊。
+ */
+private fun isAccountingBlurSupported(): Boolean =
+    isRuntimeShaderSupported() && Build.VERSION.SDK_INT != Build.VERSION_CODES.BAKLAVA

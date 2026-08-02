@@ -16,7 +16,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+
+/**
+ * 表示一次账务写操作的进行状态与可展示错误。
+ */
+data class AccountingWriteState(
+    val inProgress: Boolean = false,
+    val error: String? = null,
+)
 
 /**
  * 汇总所有主页面需要的账本状态。
@@ -29,6 +38,8 @@ data class AccountingUiState(
     val expenseCategoryTotals: List<CategoryTotal> = emptyList(),
     val aiDraft: TransactionDraft? = null,
     val aiError: String? = null,
+    val writeInProgress: Boolean = false,
+    val writeError: String? = null,
 )
 
 /**
@@ -40,6 +51,7 @@ class AccountingViewModel(
 ) : ViewModel() {
     private val aiDraft = MutableStateFlow<TransactionDraft?>(null)
     private val aiError = MutableStateFlow<String?>(null)
+    private val writeState = MutableStateFlow(AccountingWriteState())
 
     private val ledgerState = combine(
         repository.accounts,
@@ -57,8 +69,13 @@ class AccountingViewModel(
         )
     }
 
-    val uiState = combine(ledgerState, aiDraft, aiError) { ledger, draft, error ->
-        ledger.copy(aiDraft = draft, aiError = error)
+    val uiState = combine(ledgerState, aiDraft, aiError, writeState) { ledger, draft, error, write ->
+        ledger.copy(
+            aiDraft = draft,
+            aiError = error,
+            writeInProgress = write.inProgress,
+            writeError = write.error,
+        )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -99,17 +116,26 @@ class AccountingViewModel(
     }
 
     /**
+     * 清除已经向用户展示的账务写入错误。
+     */
+    fun clearWriteError() {
+        writeState.value = writeState.value.copy(error = null)
+    }
+
+    /**
      * 保存用户已经确认的手动或 AI 草稿。
      */
     fun saveTransaction(
         draft: TransactionDraft,
         onSaved: () -> Unit,
     ) {
-        viewModelScope.launch {
-            repository.saveTransaction(draft)
-            clearAiDraft()
-            onSaved()
-        }
+        launchWrite(
+            action = { repository.saveTransaction(draft) },
+            onSuccess = {
+                clearAiDraft()
+                onSaved()
+            },
+        )
     }
 
     /**
@@ -120,10 +146,10 @@ class AccountingViewModel(
         draft: TransactionDraft,
         onSaved: () -> Unit,
     ) {
-        viewModelScope.launch {
-            repository.updateTransaction(transactionId, draft)
-            onSaved()
-        }
+        launchWrite(
+            action = { repository.updateTransaction(transactionId, draft) },
+            onSuccess = { onSaved() },
+        )
     }
 
     /**
@@ -133,10 +159,10 @@ class AccountingViewModel(
         transactionId: Long,
         onDeleted: () -> Unit,
     ) {
-        viewModelScope.launch {
-            repository.deleteTransaction(transactionId)
-            onDeleted()
-        }
+        launchWrite(
+            action = { repository.deleteTransaction(transactionId) },
+            onSuccess = { onDeleted() },
+        )
     }
 
     /**
@@ -146,10 +172,10 @@ class AccountingViewModel(
         account: AccountEntity,
         onSaved: () -> Unit,
     ) {
-        viewModelScope.launch {
-            repository.saveAccount(account)
-            onSaved()
-        }
+        launchWrite(
+            action = { repository.saveAccount(account) },
+            onSuccess = { onSaved() },
+        )
     }
 
     /**
@@ -159,10 +185,10 @@ class AccountingViewModel(
         accountId: Long,
         onArchived: () -> Unit,
     ) {
-        viewModelScope.launch {
-            repository.archiveAccount(accountId)
-            onArchived()
-        }
+        launchWrite(
+            action = { repository.archiveAccount(accountId) },
+            onSuccess = { onArchived() },
+        )
     }
 
     /**
@@ -175,16 +201,44 @@ class AccountingViewModel(
         onAdded: (Long) -> Unit,
         onDuplicate: () -> Unit,
     ) {
-        val normalizedName = name.trim()
-        if (uiState.value.categories.any {
-                it.type == type && it.name == normalizedName
-            }
-        ) {
-            onDuplicate()
-            return
-        }
+        launchWrite(
+            action = { repository.addCategory(name, type, iconKey) },
+            onSuccess = onAdded,
+            onFailure = { message ->
+                if (message == "同方向分类名称不能重复") {
+                    onDuplicate()
+                    true
+                } else {
+                    false
+                }
+            },
+        )
+    }
+
+    /**
+     * 串行执行一次写操作并统一更新进行状态、错误与成功回调。
+     */
+    private fun <T> launchWrite(
+        action: suspend () -> T,
+        onSuccess: (T) -> Unit,
+        onFailure: (String) -> Boolean = { false },
+    ) {
+        if (writeState.value.inProgress) return
         viewModelScope.launch {
-            onAdded(repository.addCategory(normalizedName, type, iconKey))
+            writeState.value = AccountingWriteState(inProgress = true)
+            try {
+                val result = action()
+                writeState.value = AccountingWriteState()
+                onSuccess(result)
+            } catch (error: CancellationException) {
+                writeState.value = AccountingWriteState()
+                throw error
+            } catch (error: Exception) {
+                val message = error.message?.takeIf(String::isNotBlank) ?: "操作失败，请重试"
+                writeState.value = AccountingWriteState(
+                    error = if (onFailure(message)) null else message,
+                )
+            }
         }
     }
 

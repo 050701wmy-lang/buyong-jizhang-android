@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -24,7 +25,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,9 +40,7 @@ import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.BankCards
-import top.yukonga.miuix.kmp.icon.extended.CloudFill
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.icon.extended.ExpandMore
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.time.Instant
@@ -51,6 +49,24 @@ import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+/** 带组头列表 Card 的组头最小高度。 */
+internal val GROUPED_CARD_HEADER_MIN_HEIGHT = 40.dp
+
+/** 带组头列表 Card 的水平内容内边距。 */
+internal val GROUPED_CARD_HORIZONTAL_PADDING = 16.dp
+
+/** 带组头列表 Card 内容行的垂直内边距。 */
+internal val GROUPED_CARD_ROW_VERTICAL_PADDING = 12.dp
+
+/** 带组头列表 Card 内容行的图标容器尺寸。 */
+internal val GROUPED_CARD_ICON_CONTAINER_SIZE = 40.dp
+
+/** 带组头列表 Card 内容行的图标尺寸。 */
+internal val GROUPED_CARD_ICON_SIZE = 24.dp
+
+/** 带组头列表 Card 内容行图标容器的圆角尺寸。 */
+internal val GROUPED_CARD_ICON_CORNER_SIZE = 12.dp
 
 /**
  * 展示余额、快捷记账入口与最近账目。
@@ -188,11 +204,12 @@ private fun HomeAccountGroup(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 15.dp),
+                .heightIn(min = GROUPED_CARD_HEADER_MIN_HEIGHT)
+                .padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = homeAccountTypeTitle(type),
+                text = accountTypeTitle(type),
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.Bold,
                 style = MiuixTheme.textStyles.body1,
@@ -203,16 +220,15 @@ private fun HomeAccountGroup(
                 style = MiuixTheme.textStyles.body2,
             )
             Icon(
-                imageVector = MiuixIcons.ChevronForward,
+                imageVector = MiuixIcons.ExpandMore,
                 contentDescription = null,
                 modifier = Modifier
                     .padding(start = 6.dp)
-                    .rotate(90f)
                     .size(18.dp),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
         }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        HorizontalDivider(modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING))
         accounts.forEach { account ->
             HomeAccountRow(
                 account = account,
@@ -236,26 +252,25 @@ private fun HomeAccountRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(
+                horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
+                vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(GROUPED_CARD_ICON_CONTAINER_SIZE)
                 .squircleBackground(
                     color = MiuixTheme.colorScheme.primary.copy(alpha = 0.10f),
-                    cornerRadius = 12.dp,
+                    cornerRadius = GROUPED_CARD_ICON_CORNER_SIZE,
                 ),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (account.type == AccountType.ONLINE) {
-                    MiuixIcons.CloudFill
-                } else {
-                    MiuixIcons.BankCards
-                },
+                imageVector = accountTypeIcon(account.type),
                 contentDescription = null,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
                 tint = MiuixTheme.colorScheme.primary.copy(alpha = 0.76f),
             )
         }
@@ -285,15 +300,6 @@ private fun calculateAccountBalance(
     .sumOf { record ->
         if (record.type == TransactionType.INCOME) record.amountMinor else -record.amountMinor
     }
-
-/**
- * 返回账户类型在首页使用的分组标题。
- */
-private fun homeAccountTypeTitle(type: AccountType): String = when (type) {
-    AccountType.CASH -> "现金"
-    AccountType.BANK_CARD -> "银行卡"
-    AccountType.ONLINE -> "网络账户"
-}
 
 /**
  * 展示按时间倒序排列的全部账目。
@@ -452,7 +458,8 @@ private fun DetailsDateGroup(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 13.dp),
+                .heightIn(min = GROUPED_CARD_HEADER_MIN_HEIGHT)
+                .padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -467,7 +474,7 @@ private fun DetailsDateGroup(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        HorizontalDivider(modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING))
         records.forEach { record ->
             DetailsTransactionRow(
                 record = record,
@@ -489,15 +496,18 @@ private fun DetailsTransactionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(
+                horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
+                vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(GROUPED_CARD_ICON_CONTAINER_SIZE)
                 .squircleBackground(
                     color = MiuixTheme.colorScheme.primary.copy(alpha = 0.10f),
-                    cornerRadius = 13.dp,
+                    cornerRadius = GROUPED_CARD_ICON_CORNER_SIZE,
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -507,7 +517,7 @@ private fun DetailsTransactionRow(
                     fallbackName = record.categoryName,
                 ),
                 contentDescription = null,
-                modifier = Modifier.size(26.dp),
+                modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
                 tint = MiuixTheme.colorScheme.primary.copy(alpha = 0.72f),
             )
         }
@@ -546,10 +556,8 @@ private fun DetailsTransactionRow(
 /**
  * 返回账目在设备时区对应的自然日。
  */
-private fun detailsRecordDate(record: TransactionRecord): LocalDate = Instant
-    .ofEpochMilli(record.occurredAt)
-    .atZone(ZoneId.systemDefault())
-    .toLocalDate()
+private fun detailsRecordDate(record: TransactionRecord): LocalDate =
+    transactionLocalDate(record.occurredAt)
 
 /**
  * 返回明细账目副标题中的备注或账户说明。
@@ -597,6 +605,18 @@ fun SettingsScreen(innerPadding: PaddingValues) {
                     "货币" to "人民币（CNY）",
                     "外观" to "跟随系统",
                     "数据存储" to "仅保存在本机",
+                ),
+            )
+        }
+        item {
+            SectionTitle(text = "数据保护")
+        }
+        item {
+            SettingsGroup(
+                rows = listOf(
+                    "系统备份" to "已关闭",
+                    "卸载应用" to "将删除本地账本",
+                    "应用内备份" to "后续版本提供",
                 ),
             )
         }

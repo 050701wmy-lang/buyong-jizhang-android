@@ -4,22 +4,31 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.AccountEntity
@@ -31,9 +40,12 @@ import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -74,105 +86,168 @@ fun AccountDetailScreen(
         .entries
         .sortedByDescending(Map.Entry<YearMonth, List<TransactionRecord>>::key)
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            SmallTopAppBar(
-                title = account.name,
-                modifier = Modifier.accountingBarBlur(backdrop),
-                color = Color.Transparent,
-                navigationIcon = {
-                    IconButton(
-                        onClick = onBack,
-                        minWidth = 35.dp,
-                        minHeight = 35.dp,
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Back,
-                            contentDescription = "返回",
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { onEditAccount(account.id) },
-                        minWidth = 35.dp,
-                        minHeight = 35.dp,
-                    ) {
-                        Icon(
-                            imageVector = MiuixIcons.Edit,
-                            contentDescription = "编辑账户",
-                        )
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAddTransaction,
-                containerColor = MiuixTheme.colorScheme.primaryContainer,
-                minWidth = 56.dp,
-                minHeight = 56.dp,
-            ) {
-                Icon(
-                    imageVector = MiuixIcons.Add,
-                    contentDescription = "使用当前账户记一笔",
-                    tint = Color.White,
+    val scrollBehavior = MiuixScrollBehavior()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isWide = maxWidth >= 600.dp
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                AccountDetailTopBar(
+                    title = account.name,
+                    isWide = isWide,
+                    scrollBehavior = scrollBehavior,
+                    backdrop = backdrop,
+                    onBack = onBack,
+                    onEdit = { onEditAccount(account.id) },
                 )
-            }
-        },
-        floatingActionButtonPosition = FabPosition.End,
-    ) { innerPadding ->
-        Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = onAddTransaction,
+                    modifier = if (isWide) {
+                        Modifier
+                    } else {
+                        Modifier.offset(x = (-22.5f).dp, y = (-21.5f).dp)
+                    },
+                    containerColor = MiuixTheme.colorScheme.primaryContainer,
+                    minWidth = 56.dp,
+                    minHeight = 56.dp,
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Add,
+                        contentDescription = "使用当前账户记一笔",
+                        tint = Color.White,
+                    )
+                }
+            },
+            floatingActionButtonPosition = FabPosition.End,
+        ) { innerPadding ->
+            val layoutDirection = LocalLayoutDirection.current
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .layerBackdrop(backdrop)
+                    .padding(
+                        start = innerPadding.calculateStartPadding(layoutDirection),
+                        end = innerPadding.calculateEndPadding(layoutDirection),
+                    ),
             ) {
-                item {
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-                item {
-                    AccountBalanceCard(
-                        balance = balance,
-                        income = income,
-                        expense = expense,
-                    )
-                }
-                if (monthlyTransactions.isEmpty()) {
+                LazyColumn(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .widthIn(max = 800.dp)
+                        .fillMaxSize(),
+                    contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
+                ) {
                     item {
-                        Card(
-                            modifier = Modifier
-                                .padding(horizontal = 12.dp)
-                                .padding(bottom = 12.dp),
-                        ) {
-                            Text(
-                                text = "暂无账目",
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                    item {
+                        AccountBalanceCard(
+                            balance = balance,
+                            income = income,
+                            expense = expense,
+                        )
+                    }
+                    if (monthlyTransactions.isEmpty()) {
+                        item {
+                            Card(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 36.dp),
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            )
+                                    .padding(horizontal = 12.dp)
+                                    .padding(bottom = 12.dp),
+                            ) {
+                                Text(
+                                    text = "暂无账目",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 36.dp),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                )
+                            }
+                        }
+                    } else {
+                        monthlyTransactions.forEach { entry ->
+                            item(key = entry.key.toString()) {
+                                AccountMonthCard(
+                                    month = entry.key,
+                                    records = entry.value,
+                                    onEditTransaction = onEditTransaction,
+                                )
+                            }
                         }
                     }
-                } else {
-                    monthlyTransactions.forEach { entry ->
-                        item(key = entry.key.toString()) {
-                            AccountMonthCard(
-                                month = entry.key,
-                                records = entry.value,
-                                onEditTransaction = onEditTransaction,
-                            )
-                        }
+                    item {
+                        Spacer(
+                            modifier = Modifier
+                                .height(96.dp)
+                                .navigationBarsPadding(),
+                        )
                     }
-                }
-                item {
-                    Spacer(
-                        modifier = Modifier
-                            .height(96.dp)
-                            .navigationBarsPadding(),
-                    )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 根据窗口宽度展示可折叠大标题或固定小标题账户顶栏。
+ */
+@Composable
+private fun AccountDetailTopBar(
+    title: String,
+    isWide: Boolean,
+    scrollBehavior: ScrollBehavior,
+    backdrop: LayerBackdrop,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val navigationIcon: @Composable () -> Unit = {
+        IconButton(
+            onClick = onBack,
+            minWidth = 35.dp,
+            minHeight = 35.dp,
+        ) {
+            Icon(
+                imageVector = MiuixIcons.Back,
+                contentDescription = "返回",
+            )
+        }
+    }
+    val actions: @Composable RowScope.() -> Unit = {
+        IconButton(
+            onClick = onEdit,
+            backgroundColor = Color.Transparent,
+            minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
+            minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
+        ) {
+            Icon(
+                imageVector = MiuixIcons.Edit,
+                contentDescription = "编辑账户",
+                modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
+            )
+        }
+    }
+    AccountingBlurTopBar(backdrop = backdrop) {
+        if (isWide) {
+            SmallTopAppBar(
+                title = title,
+                color = Color.Transparent,
+                navigationIcon = navigationIcon,
+                actions = actions,
+                scrollBehavior = scrollBehavior,
+                actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+            )
+        } else {
+            TopAppBar(
+                title = title,
+                color = Color.Transparent,
+                navigationIcon = navigationIcon,
+                actions = actions,
+                scrollBehavior = scrollBehavior,
+                actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+            )
         }
     }
 }
@@ -195,6 +270,7 @@ private fun AccountBalanceCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .height(168.dp)
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -257,7 +333,8 @@ private fun AccountMonthCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 13.dp),
+                .heightIn(min = GROUPED_CARD_HEADER_MIN_HEIGHT)
+                .padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -272,7 +349,7 @@ private fun AccountMonthCard(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        HorizontalDivider(modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING))
         records.forEach { record ->
             AccountTransactionRow(
                 record = record,
@@ -294,15 +371,18 @@ private fun AccountTransactionRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(
+                horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
+                vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
+                .size(GROUPED_CARD_ICON_CONTAINER_SIZE)
                 .squircleBackground(
                     color = MiuixTheme.colorScheme.primary.copy(alpha = 0.10f),
-                    cornerRadius = 13.dp,
+                    cornerRadius = GROUPED_CARD_ICON_CORNER_SIZE,
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -312,7 +392,7 @@ private fun AccountTransactionRow(
                     fallbackName = record.categoryName,
                 ),
                 contentDescription = null,
-                modifier = Modifier.size(25.dp),
+                modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
                 tint = MiuixTheme.colorScheme.primary,
             )
         }

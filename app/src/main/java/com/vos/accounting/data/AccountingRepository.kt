@@ -4,6 +4,11 @@ import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransactionDraft
 
 /**
+ * 表示用户可修正的账务写入错误。
+ */
+class AccountingWriteException(message: String) : IllegalArgumentException(message)
+
+/**
  * 汇总账本数据读取与统一写入流程。
  */
 class AccountingRepository(
@@ -26,7 +31,7 @@ class AccountingRepository(
      * 把已经确认的草稿写入正式账目。
      */
     suspend fun saveTransaction(draft: TransactionDraft): Long {
-        require(draft.amountMinor > 0)
+        validateTransactionDraft(draft)
         return dao.insertTransaction(
             TransactionEntity(
                 type = draft.type,
@@ -48,8 +53,10 @@ class AccountingRepository(
         transactionId: Long,
         draft: TransactionDraft,
     ) {
-        require(draft.amountMinor > 0)
-        dao.updateTransaction(
+        val original = dao.findTransaction(transactionId)
+            ?: throw AccountingWriteException("账目不存在或已被删除")
+        validateTransactionDraft(draft, original)
+        val updated = dao.updateTransaction(
             TransactionEntity(
                 id = transactionId,
                 type = draft.type,
@@ -62,13 +69,16 @@ class AccountingRepository(
                 source = draft.source,
             ),
         )
+        if (updated == 0) throw AccountingWriteException("账目不存在或已被删除")
     }
 
     /**
      * 删除指定账目。
      */
     suspend fun deleteTransaction(transactionId: Long) {
-        dao.deleteTransaction(transactionId)
+        if (dao.deleteTransaction(transactionId) == 0) {
+            throw AccountingWriteException("账目不存在或已被删除")
+        }
     }
 
     /**
@@ -80,7 +90,7 @@ class AccountingRepository(
             sortOrder = if (account.id == 0L) dao.maxAccountSortOrder() + 1 else account.sortOrder,
             isDefault = account.isDefault && !account.isArchived,
         )
-        require(normalized.name.isNotEmpty())
+        if (normalized.name.isEmpty()) throw AccountingWriteException("账户名称不能为空")
         return dao.saveAccount(normalized)
     }
 
@@ -88,6 +98,9 @@ class AccountingRepository(
      * 停用指定账户。
      */
     suspend fun archiveAccount(accountId: Long) {
+        if (dao.findAccount(accountId) == null) {
+            throw AccountingWriteException("账户不存在或已被删除")
+        }
         dao.archiveAccount(accountId)
     }
 
@@ -100,8 +113,9 @@ class AccountingRepository(
         iconKey: String,
     ): Long {
         val normalizedName = name.trim()
-        require(normalizedName.isNotEmpty())
-        return dao.insertCategory(
+        if (normalizedName.isEmpty()) throw AccountingWriteException("分类名称不能为空")
+        if (iconKey.isBlank()) throw AccountingWriteException("请选择分类图标")
+        val categoryId = dao.insertCategory(
             CategoryEntity(
                 name = normalizedName,
                 type = type,
@@ -109,5 +123,33 @@ class AccountingRepository(
                 iconKey = iconKey,
             ),
         )
+        if (categoryId == -1L) {
+            throw AccountingWriteException("同方向分类名称不能重复")
+        }
+        return categoryId
+    }
+
+    /**
+     * 校验草稿引用的数据与收支方向，并允许编辑账目继续引用原有停用项。
+     */
+    private suspend fun validateTransactionDraft(
+        draft: TransactionDraft,
+        original: TransactionEntity? = null,
+    ) {
+        if (draft.amountMinor <= 0) throw AccountingWriteException("金额必须大于零")
+        if (draft.occurredAt <= 0) throw AccountingWriteException("记账时间无效")
+        val account = dao.findAccount(draft.accountId)
+            ?: throw AccountingWriteException("所选账户不存在")
+        if (account.isArchived && original?.accountId != account.id) {
+            throw AccountingWriteException("所选账户已停用")
+        }
+        val category = dao.findCategory(draft.categoryId)
+            ?: throw AccountingWriteException("所选分类不存在")
+        if (category.isArchived && original?.categoryId != category.id) {
+            throw AccountingWriteException("所选分类已停用")
+        }
+        if (category.type != draft.type) {
+            throw AccountingWriteException("分类与收支类型不一致")
+        }
     }
 }

@@ -4,6 +4,7 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -44,3 +45,11 @@ fun formatTransactionTime(epochMillis: Long): String = Instant
     .ofEpochMilli(epochMillis)
     .atZone(ZoneId.systemDefault())
     .format(DateTimeFormatter.ofPattern("MM月dd日 HH:mm"))
+
+/**
+ * 返回时间戳在指定时区对应的自然日。
+ */
+fun transactionLocalDate(
+    epochMillis: Long,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): LocalDate = Instant.ofEpochMilli(epochMillis).atZone(zoneId).toLocalDate()

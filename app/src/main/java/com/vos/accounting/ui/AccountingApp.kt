@@ -4,7 +4,9 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
@@ -18,8 +20,6 @@ import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.getValue
 
 /**
  * 表示应用的 Navigation 3 页面键。
@@ -168,6 +168,7 @@ fun AccountingApp() {
                         AccountEditorScreen(
                             account = account,
                             currentBalanceMinor = currentBalanceMinor,
+                            writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onSave = viewModel::saveAccount,
@@ -187,6 +188,10 @@ fun AccountingApp() {
                         )
                     }
                 },
+            )
+            AccountingWriteErrorDialog(
+                message = uiState.writeError,
+                onDismiss = viewModel::clearWriteError,
             )
         }
     }

@@ -191,6 +191,24 @@ interface AccountingDao {
     fun observeExpenseCategoryTotals(): Flow<List<CategoryTotal>>
 
     /**
+     * 返回指定账户，找不到时返回空。
+     */
+    @Query("SELECT * FROM accounts WHERE id = :accountId")
+    suspend fun findAccount(accountId: Long): AccountEntity?
+
+    /**
+     * 返回指定分类，找不到时返回空。
+     */
+    @Query("SELECT * FROM categories WHERE id = :categoryId")
+    suspend fun findCategory(categoryId: Long): CategoryEntity?
+
+    /**
+     * 返回指定账目，找不到时返回空。
+     */
+    @Query("SELECT * FROM transactions WHERE id = :transactionId")
+    suspend fun findTransaction(transactionId: Long): TransactionEntity?
+
+    /**
      * 插入一个账户。
      */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -209,30 +227,69 @@ interface AccountingDao {
     suspend fun clearDefaultAccounts()
 
     /**
+     * 返回未停用的默认账户数量。
+     */
+    @Query("SELECT COUNT(*) FROM accounts WHERE is_default = 1 AND is_archived = 0")
+    suspend fun countActiveDefaultAccounts(): Int
+
+    /**
+     * 返回排序最靠前的未停用账户标识。
+     */
+    @Query("SELECT id FROM accounts WHERE is_archived = 0 ORDER BY sort_order, id LIMIT 1")
+    suspend fun firstActiveAccountId(): Long?
+
+    /**
+     * 将指定账户设为默认账户。
+     */
+    @Query("UPDATE accounts SET is_default = 1 WHERE id = :accountId")
+    suspend fun markAccountDefault(accountId: Long)
+
+    /**
      * 返回账户当前最大的排序值。
      */
     @Query("SELECT COALESCE(MAX(sort_order), -1) FROM accounts")
     suspend fun maxAccountSortOrder(): Int
 
     /**
-     * 新增或更新账户，并保持至多一个默认账户。
+     * 新增或更新账户，并保持有效账户拥有唯一默认项。
      */
     @Transaction
     suspend fun saveAccount(account: AccountEntity): Long {
-        if (account.isDefault) clearDefaultAccounts()
-        return if (account.id == 0L) {
+        if (account.isDefault && !account.isArchived) clearDefaultAccounts()
+        val accountId = if (account.id == 0L) {
             insertAccount(account)
         } else {
             updateAccount(account)
             account.id
         }
+        ensureDefaultAccount()
+        return accountId
     }
 
     /**
-     * 停用指定账户并清除其默认状态。
+     * 标记指定账户为停用并清除其默认状态。
      */
     @Query("UPDATE accounts SET is_archived = 1, is_default = 0 WHERE id = :accountId")
-    suspend fun archiveAccount(accountId: Long)
+    suspend fun markAccountArchived(accountId: Long)
+
+    /**
+     * 停用指定账户并为剩余有效账户补齐默认项。
+     */
+    @Transaction
+    suspend fun archiveAccount(accountId: Long) {
+        markAccountArchived(accountId)
+        ensureDefaultAccount()
+    }
+
+    /**
+     * 在存在有效账户但没有默认项时选择排序最靠前的账户。
+     */
+    @Transaction
+    suspend fun ensureDefaultAccount() {
+        if (countActiveDefaultAccounts() == 0) {
+            firstActiveAccountId()?.let { markAccountDefault(it) }
+        }
+    }
 
     /**
      * 插入一组分类。
@@ -243,7 +300,7 @@ interface AccountingDao {
     /**
      * 插入一个分类并返回其标识。
      */
-    @Insert
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCategory(category: CategoryEntity): Long
 
     /**
@@ -274,13 +331,13 @@ interface AccountingDao {
      * 更新一笔已有账目。
      */
     @Update
-    suspend fun updateTransaction(transaction: TransactionEntity)
+    suspend fun updateTransaction(transaction: TransactionEntity): Int
 
     /**
      * 删除指定账目。
      */
     @Query("DELETE FROM transactions WHERE id = :transactionId")
-    suspend fun deleteTransaction(transactionId: Long)
+    suspend fun deleteTransaction(transactionId: Long): Int
 
     /**
      * 返回账户数量。
@@ -310,6 +367,7 @@ interface AccountingDao {
                 ),
             )
         }
+        ensureDefaultAccount()
         if (countCategories() == 0) {
             insertCategories(
                 listOf(
@@ -351,7 +409,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             "accounting.db",
         ).addMigrations(MIGRATION_1_2).build()
 
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
             /**
              * 为账户和分类补充管理状态及分类图标字段。
              */

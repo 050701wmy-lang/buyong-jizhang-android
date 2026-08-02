@@ -1,6 +1,7 @@
 package com.vos.accounting.model
 
 import androidx.room.ColumnInfo
+import kotlinx.serialization.Serializable
 
 /**
  * 表示账目的收支方向。
@@ -21,10 +22,15 @@ enum class TransactionSource {
 /**
  * 表示账户类型。
  */
+@Serializable
 enum class AccountType {
     CASH,
     BANK_CARD,
+    CREDIT,
     ONLINE,
+    INVESTMENT,
+    STORED_VALUE,
+    VIRTUAL,
 }
 
 /**

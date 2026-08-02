@@ -871,10 +871,8 @@ private fun amountForRange(
 /**
  * 将账目时间戳转换为设备时区日期。
  */
-private fun recordDate(record: TransactionRecord): LocalDate = Instant
-    .ofEpochMilli(record.occurredAt)
-    .atZone(ZoneId.systemDefault())
-    .toLocalDate()
+private fun recordDate(record: TransactionRecord): LocalDate =
+    transactionLocalDate(record.occurredAt)
 
 /**
  * 格式化顶部日期区间。
