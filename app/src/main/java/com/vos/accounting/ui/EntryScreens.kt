@@ -50,6 +50,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.sp
 import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.CategoryEntity
@@ -69,6 +70,7 @@ import top.yukonga.miuix.kmp.basic.ListPopupColumn
 import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NumberPicker
+import top.yukonga.miuix.kmp.basic.NumberPickerDefaults
 import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
@@ -98,6 +100,7 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.window.WindowDialog
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowListPopup
 import java.math.BigDecimal
 import java.time.Instant
@@ -147,7 +150,7 @@ fun ManualEntryScreen(
         mutableStateOf(transaction?.categoryId ?: 0L)
     }
     var keypadVisible by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction == null)
+        mutableStateOf(false)
     }
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
@@ -179,6 +182,7 @@ fun ManualEntryScreen(
         title = if (transaction == null) "记一笔" else "编辑",
         backdrop = backdrop,
         onBack = onBack,
+        collapsible = false,
         navigationIcon = MiuixIcons.Close,
         navigationContentDescription = "关闭",
     ) { innerPadding ->
@@ -187,12 +191,9 @@ fun ManualEntryScreen(
             amountExpression = amountExpression,
             amountMinor = amountMinor,
             type = type,
-            accounts = selectableAccounts,
-            accountId = accountId,
             categories = matchingCategories,
             categoryId = categoryId,
             note = note,
-            merchant = merchant,
             occurredAt = occurredAt,
             canSave = amountMinor != null &&
                 accountId != 0L &&
@@ -202,11 +203,8 @@ fun ManualEntryScreen(
             editMode = transaction != null,
             keypadVisible = keypadVisible,
             onSelectType = { type = it },
-            onSelectAccount = { accountId = it },
             onSelectCategory = { categoryId = it },
-            onAddCategory = { showCategoryDialog = true },
             onNoteChange = { note = it },
-            onMerchantChange = { merchant = it },
             onOccurredAtChange = { occurredAt = it },
             onShowKeypad = { keypadVisible = true },
             onHideKeypad = { keypadVisible = false },
@@ -266,23 +264,17 @@ private fun ManualEntryContent(
     amountExpression: String,
     amountMinor: Long?,
     type: TransactionType,
-    accounts: List<AccountEntity>,
-    accountId: Long,
     categories: List<CategoryEntity>,
     categoryId: Long,
     note: TextFieldValue,
-    merchant: TextFieldValue,
     occurredAt: Long,
     canSave: Boolean,
     writeInProgress: Boolean,
     editMode: Boolean,
     keypadVisible: Boolean,
     onSelectType: (TransactionType) -> Unit,
-    onSelectAccount: (Long) -> Unit,
     onSelectCategory: (Long) -> Unit,
-    onAddCategory: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
-    onMerchantChange: (TextFieldValue) -> Unit,
     onOccurredAtChange: (Long) -> Unit,
     onShowKeypad: () -> Unit,
     onHideKeypad: () -> Unit,
@@ -322,17 +314,11 @@ private fun ManualEntryContent(
                 categories = categories,
                 selectedId = categoryId,
                 onSelect = onSelectCategory,
-                onAdd = onAddCategory,
             )
             ManualDetailRows(
-                accounts = accounts,
-                accountId = accountId,
                 occurredAt = occurredAt,
-                merchant = merchant,
                 note = note,
-                onSelectAccount = onSelectAccount,
                 onOccurredAtChange = onOccurredAtChange,
-                onMerchantChange = onMerchantChange,
                 onNoteChange = onNoteChange,
                 onNoteFocusChange = { noteFocused = it },
             )
@@ -352,6 +338,12 @@ private fun ManualEntryContent(
                 onDelete = onDelete,
                 onSave = onSave,
             )
+        } else if (!noteFocused) {
+            ManualSaveAction(
+                saveEnabled = canSave,
+                writeInProgress = writeInProgress,
+                onSave = onSave,
+            )
         }
     }
     LaunchedEffect(noteFocused) {
@@ -360,7 +352,7 @@ private fun ManualEntryContent(
 }
 
 /**
- * 展示支出与收入类型标签。
+ * 展示与参考界面一致的左对齐支出与收入类型标签。
  */
 @Composable
 private fun ManualTypeTabs(
@@ -375,11 +367,13 @@ private fun ManualTypeTabs(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ManualTypeTab(
+            modifier = Modifier.width(78.dp),
             title = "支出",
             selected = type == TransactionType.EXPENSE,
             onClick = { onSelectType(TransactionType.EXPENSE) },
         )
         ManualTypeTab(
+            modifier = Modifier.width(78.dp),
             title = "收入",
             selected = type == TransactionType.INCOME,
             onClick = { onSelectType(TransactionType.INCOME) },
@@ -392,13 +386,13 @@ private fun ManualTypeTabs(
  */
 @Composable
 private fun ManualTypeTab(
+    modifier: Modifier,
     title: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
-            .width(78.dp)
+        modifier = modifier
             .fillMaxHeight()
             .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -409,7 +403,7 @@ private fun ManualTypeTab(
             color = if (selected) {
                 MiuixTheme.colorScheme.onBackground
             } else {
-                MiuixTheme.colorScheme.onSurfaceVariantSummary
+                MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.55f)
             },
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             style = MiuixTheme.textStyles.title4,
@@ -444,12 +438,13 @@ private fun ManualAmountDisplay(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 20.dp)
+            .padding(top = 18.dp, bottom = 14.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(92.dp),
+                .height(76.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -459,9 +454,9 @@ private fun ManualAmountDisplay(
             )
             Text(
                 text = amountExpression.ifBlank { "0.00" },
-                modifier = Modifier.padding(start = 8.dp),
+                modifier = Modifier.padding(start = 6.dp),
                 color = if (amountExpression.isBlank()) {
-                    MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.35f)
+                    MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.28f)
                 } else {
                     MiuixTheme.colorScheme.onBackground
                 },
@@ -470,12 +465,7 @@ private fun ManualAmountDisplay(
                 maxLines = 1,
             )
         }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(MiuixTheme.colorScheme.primary),
-        )
+        HorizontalDivider()
         if (invalid) {
             Text(
                 text = "请输入大于 0 且最多两位小数的金额",
@@ -488,23 +478,21 @@ private fun ManualAmountDisplay(
 }
 
 /**
- * 按每行五项展示当前收支类型的真实分类。
+ * 按每行五项展示当前收支类型的真实分类图标。
  */
 @Composable
 private fun ManualCategoryGrid(
     categories: List<CategoryEntity>,
     selectedId: Long,
     onSelect: (Long) -> Unit,
-    onAdd: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 20.dp),
+            .padding(horizontal = 12.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        val slotCount = categories.size + 1
-        repeat((slotCount + 4) / 5) { rowIndex ->
+        repeat((categories.size + 4) / 5) { rowIndex ->
             Row(modifier = Modifier.fillMaxWidth()) {
                 repeat(5) { columnIndex ->
                     val itemIndex = rowIndex * 5 + columnIndex
@@ -518,22 +506,38 @@ private fun ManualCategoryGrid(
                                 onClick = { onSelect(category.id) },
                             )
                         }
-
-                        itemIndex == categories.size -> ManualCategoryAddItem(
-                            modifier = Modifier.weight(1f),
-                            onClick = onAdd,
-                        )
-
                         else -> Spacer(modifier = Modifier.weight(1f))
                     }
                 }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            repeat(3) { index ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 4.dp)
+                        .size(6.dp)
+                        .squircleBackground(
+                            color = if (index == 0) {
+                                MiuixTheme.colorScheme.onSurfaceVariantSummary
+                            } else {
+                                MiuixTheme.colorScheme.surfaceContainerHigh
+                            },
+                            cornerRadius = 3.dp,
+                        ),
+                )
             }
         }
     }
 }
 
 /**
- * 展示一个带 MIUIX 图标和 squircle 选中态的分类。
+ * 展示一个带 MIUIX 图标和 squircle 选中态的分类宫格项。
  */
 @Composable
 private fun ManualCategoryItem(
@@ -548,23 +552,26 @@ private fun ManualCategoryItem(
     ) {
         Box(
             modifier = Modifier
-                .size(56.dp)
+                .size(46.dp)
                 .squircleBackground(
                     color = if (selected) {
                         MiuixTheme.colorScheme.primary
                     } else {
-                        MiuixTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        MiuixTheme.colorScheme.surfaceContainerHigh
                     },
-                    cornerRadius = 15.dp,
+                    cornerRadius = 13.dp,
                 )
-                .padding(if (selected) 0.dp else 1.dp)
-                .squircleBackground(
-                    color = if (selected) {
-                        MiuixTheme.colorScheme.primary
+                .then(
+                    if (selected) {
+                        Modifier
                     } else {
-                        MiuixTheme.colorScheme.surface
+                        Modifier
+                            .padding(1.dp)
+                            .squircleBackground(
+                                color = MiuixTheme.colorScheme.surface,
+                                cornerRadius = 12.dp,
+                            )
                     },
-                    cornerRadius = 14.dp,
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -574,17 +581,13 @@ private fun ManualCategoryItem(
                     fallbackName = category.name,
                 ),
                 contentDescription = null,
-                modifier = Modifier.size(30.dp),
-                tint = if (selected) {
-                    Color.White
-                } else {
-                    MiuixTheme.colorScheme.primary.copy(alpha = 0.72f)
-                },
+                modifier = Modifier.size(26.dp),
+                tint = if (selected) Color.White else MiuixTheme.colorScheme.primary.copy(alpha = 0.58f),
             )
         }
         Text(
             text = category.name,
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(top = 6.dp),
             color = if (selected) {
                 MiuixTheme.colorScheme.onBackground
             } else {
@@ -606,28 +609,28 @@ private fun ManualCategoryAddItem(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = modifier.clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .squircleBackground(
-                    color = MiuixTheme.colorScheme.surfaceContainer,
-                    cornerRadius = 28.dp,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = MiuixIcons.Add,
-                contentDescription = "添加分类",
-                modifier = Modifier.size(28.dp),
+    Row(
+        modifier = modifier
+            .padding(horizontal = 4.dp)
+            .height(46.dp)
+            .squircleBackground(
+                color = MiuixTheme.colorScheme.surfaceContainer,
+                cornerRadius = 23.dp,
             )
-        }
+            .squircleClip(23.dp)
+            .clickable(onClick = onClick),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.Add,
+            contentDescription = "添加分类",
+            modifier = Modifier.size(18.dp),
+            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
         Text(
             text = "添加",
-            modifier = Modifier.padding(top = 7.dp),
+            modifier = Modifier.padding(start = 5.dp),
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             style = MiuixTheme.textStyles.footnote1,
         )
@@ -635,25 +638,23 @@ private fun ManualCategoryAddItem(
 }
 
 /**
- * 展示记账时间和可编辑备注。
+ * 按参考界面展示时间和备注两行附加信息。
  */
 @Composable
 private fun ManualDetailRows(
-    accounts: List<AccountEntity>,
-    accountId: Long,
     occurredAt: Long,
-    merchant: TextFieldValue,
     note: TextFieldValue,
-    onSelectAccount: (Long) -> Unit,
     onOccurredAtChange: (Long) -> Unit,
-    onMerchantChange: (TextFieldValue) -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onNoteFocusChange: (Boolean) -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
-    var showAccountPicker by rememberSaveable { mutableStateOf(false) }
     var showDateTimePicker by rememberSaveable { mutableStateOf(false) }
-    Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+    ) {
         HorizontalDivider()
         Row(
             modifier = Modifier
@@ -679,7 +680,6 @@ private fun ManualDetailRows(
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 20.dp),
-                textAlign = TextAlign.Start,
                 style = MiuixTheme.textStyles.body2,
             )
             Icon(
@@ -687,62 +687,6 @@ private fun ManualDetailRows(
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
-        }
-        HorizontalDivider()
-        ManualTextInputRow(
-            icon = MiuixIcons.Store,
-            title = "对象",
-            value = merchant,
-            placeholder = "点击添加商家或对象",
-            focusManager = focusManager,
-            onValueChange = onMerchantChange,
-            onFocusChange = onNoteFocusChange,
-        )
-        HorizontalDivider()
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp)
-                    .clickable { showAccountPicker = true },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = MiuixIcons.BankCards,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-                Text(
-                    text = "账户",
-                    modifier = Modifier.padding(start = 8.dp),
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    style = MiuixTheme.textStyles.body2,
-                )
-                Text(
-                    text = accounts.firstOrNull { it.id == accountId }?.name.orEmpty(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 20.dp),
-                    style = MiuixTheme.textStyles.body2,
-                )
-                Icon(
-                    imageVector = MiuixIcons.Basic.ArrowUpDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(width = 10.dp, height = 16.dp),
-                    tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                )
-            }
-            AccountPickerPopup(
-                show = showAccountPicker,
-                accounts = accounts,
-                selectedId = accountId,
-                onDismiss = { showAccountPicker = false },
-                onSelect = {
-                    onSelectAccount(it)
-                    showAccountPicker = false
-                },
             )
         }
         HorizontalDivider()
@@ -824,7 +768,8 @@ private fun ManualTextInputRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(58.dp),
+            .height(56.dp)
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
@@ -871,7 +816,7 @@ private fun ManualTextInputRow(
 }
 
 /**
- * 使用 MIUIX 数字选择器编辑账目的本地日期与时间。
+ * 使用 MIUIX 底部弹层分步编辑账目的本地日期与时间。
  */
 @Composable
 private fun ManualDateTimeDialog(
@@ -887,73 +832,154 @@ private fun ManualDateTimeDialog(
     var day by rememberSaveable(show) { mutableStateOf(initialDateTime.dayOfMonth) }
     var hour by rememberSaveable(show) { mutableStateOf(initialDateTime.hour) }
     var minute by rememberSaveable(show) { mutableStateOf(initialDateTime.minute) }
+    var editingTime by rememberSaveable(show) { mutableStateOf(false) }
+    val pickerColors = NumberPickerDefaults.colors(
+        selectedTextColor = MiuixTheme.colorScheme.primary,
+    )
+    val pickerTextStyle = MiuixTheme.textStyles.title3.copy(
+        fontSize = 28.sp,
+        fontWeight = FontWeight.Medium,
+    )
     val maxDay = LocalDate.of(year, month, 1).lengthOfMonth()
     LaunchedEffect(maxDay) {
         day = day.coerceAtMost(maxDay)
     }
-    WindowDialog(
+    WindowBottomSheet(
         show = show,
-        title = "修改时间",
+        title = "编辑日期",
         onDismissRequest = onDismiss,
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(24.dp, 20.dp),
+        allowDismiss = true,
     ) {
         Column {
-            Row(modifier = Modifier.fillMaxWidth()) {
-                NumberPicker(
-                    value = year,
-                    onValueChange = { year = it },
-                    modifier = Modifier.weight(1.2f),
-                    range = 1970..2100,
-                    label = { "${it}年" },
-                    visibleItemCount = 3,
-                )
-                NumberPicker(
-                    value = month,
-                    onValueChange = { month = it },
-                    modifier = Modifier.weight(1f),
-                    range = 1..12,
-                    label = { "${it}月" },
-                    visibleItemCount = 3,
-                    wrapAround = true,
-                )
-                NumberPicker(
-                    value = day,
-                    onValueChange = { day = it },
-                    modifier = Modifier.weight(1f),
-                    range = 1..maxDay,
-                    label = { "${it}日" },
-                    visibleItemCount = 3,
-                    wrapAround = true,
-                )
-            }
-            Row(modifier = Modifier.fillMaxWidth()) {
-                NumberPicker(
-                    value = hour,
-                    onValueChange = { hour = it },
-                    modifier = Modifier.weight(1f),
-                    range = 0..23,
-                    label = { "%02d时".format(it) },
-                    visibleItemCount = 3,
-                    wrapAround = true,
-                )
-                NumberPicker(
-                    value = minute,
-                    onValueChange = { minute = it },
-                    modifier = Modifier.weight(1f),
-                    range = 0..59,
-                    label = { "%02d分".format(it) },
-                    visibleItemCount = 3,
-                    wrapAround = true,
-                )
+            HorizontalDivider()
+            if (editingTime) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .clickable { editingTime = false },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "日期",
+                        modifier = Modifier.weight(1f),
+                        style = MiuixTheme.textStyles.title4,
+                    )
+                    Text(
+                        text = "${year}年${month}月${day}日",
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.body1,
+                    )
+                    Icon(
+                        imageVector = MiuixIcons.ChevronForward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .size(18.dp),
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
+                HorizontalDivider()
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    NumberPicker(
+                        value = hour,
+                        onValueChange = { hour = it },
+                        modifier = Modifier.weight(1f),
+                        range = 0..23,
+                        label = { "%02d时".format(it) },
+                        visibleItemCount = 3,
+                        wrapAround = true,
+                        colors = pickerColors,
+                        textStyle = pickerTextStyle,
+                    )
+                    NumberPicker(
+                        value = minute,
+                        onValueChange = { minute = it },
+                        modifier = Modifier.weight(1f),
+                        range = 0..59,
+                        label = { "%02d分".format(it) },
+                        visibleItemCount = 3,
+                        wrapAround = true,
+                        colors = pickerColors,
+                        textStyle = pickerTextStyle,
+                    )
+                }
+            } else {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    NumberPicker(
+                        value = year,
+                        onValueChange = { year = it },
+                        modifier = Modifier.weight(1.2f),
+                        range = 1970..2100,
+                        label = { "${it}年" },
+                        visibleItemCount = 3,
+                        colors = pickerColors,
+                        textStyle = pickerTextStyle,
+                    )
+                    NumberPicker(
+                        value = month,
+                        onValueChange = { month = it },
+                        modifier = Modifier.weight(1f),
+                        range = 1..12,
+                        label = { "${it}月" },
+                        visibleItemCount = 3,
+                        wrapAround = true,
+                        colors = pickerColors,
+                        textStyle = pickerTextStyle,
+                    )
+                    NumberPicker(
+                        value = day,
+                        onValueChange = { day = it },
+                        modifier = Modifier.weight(1f),
+                        range = 1..maxDay,
+                        label = { "${it}日" },
+                        visibleItemCount = 3,
+                        wrapAround = true,
+                        colors = pickerColors,
+                        textStyle = pickerTextStyle,
+                    )
+                }
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .clickable { editingTime = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "时刻",
+                        modifier = Modifier.weight(1f),
+                        style = MiuixTheme.textStyles.title4,
+                    )
+                    Text(
+                        text = "%02d:%02d".format(hour, minute),
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.body1,
+                    )
+                    Icon(
+                        imageVector = MiuixIcons.ChevronForward,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(start = 6.dp)
+                            .size(18.dp),
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
+                }
             }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp),
+                    .padding(top = 18.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Button(
                     onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp),
                 ) {
                     Text(text = "取消")
                 }
@@ -966,7 +992,9 @@ private fun ManualDateTimeDialog(
                                 .toEpochMilli(),
                         )
                     },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(54.dp),
                     colors = ButtonDefaults.buttonColorsPrimary(),
                 ) {
                     Text(text = "确认")
@@ -1009,6 +1037,39 @@ private fun ManualEditActions(
             colors = ButtonDefaults.buttonColorsPrimary(),
         ) {
             Text(text = if (writeInProgress) "保存中…" else "保存")
+        }
+    }
+}
+
+/**
+ * 展示新建记账页固定在底部的通栏保存按钮。
+ */
+@Composable
+private fun ManualSaveAction(
+    saveEnabled: Boolean,
+    writeInProgress: Boolean,
+    onSave: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MiuixTheme.colorScheme.surface)
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .navigationBarsPadding()
+            .padding(bottom = 10.dp),
+    ) {
+        Button(
+            onClick = onSave,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            enabled = saveEnabled,
+            colors = ButtonDefaults.buttonColorsPrimary(),
+        ) {
+            Text(
+                text = if (writeInProgress) "保存中" else "保存",
+                style = MiuixTheme.textStyles.title4,
+            )
         }
     }
 }
@@ -2117,18 +2178,21 @@ private fun SecondaryScaffold(
     title: String,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
+    collapsible: Boolean = true,
     navigationIcon: ImageVector = MiuixIcons.Back,
     navigationContentDescription: String = "返回",
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            AccountingBlurTopBar(backdrop = backdrop) {
-                SmallTopAppBar(
-                    title = title,
-                    color = Color.Transparent,
-                    navigationIcon = {
+    val scrollBehavior = MiuixScrollBehavior()
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isWide = maxWidth >= 600.dp
+        Scaffold(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                AccountingBlurTopBar(backdrop = backdrop) {
+                    val topBarNavigationIcon: @Composable () -> Unit = {
                         IconButton(
                             onClick = onBack,
                             minWidth = 35.dp,
@@ -2139,16 +2203,31 @@ private fun SecondaryScaffold(
                                 contentDescription = navigationContentDescription,
                             )
                         }
-                    },
-                )
-            }
-        },
-        content = { innerPadding ->
-            Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-                content(innerPadding)
-            }
-        },
-    )
+                    }
+                    if (isWide || !collapsible) {
+                        SmallTopAppBar(
+                            title = title,
+                            color = Color.Transparent,
+                            navigationIcon = topBarNavigationIcon,
+                            scrollBehavior = scrollBehavior,
+                        )
+                    } else {
+                        TopAppBar(
+                            title = title,
+                            color = Color.Transparent,
+                            navigationIcon = topBarNavigationIcon,
+                            scrollBehavior = scrollBehavior,
+                        )
+                    }
+                }
+            },
+            content = { innerPadding ->
+                Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
+                    content(innerPadding)
+                }
+            },
+        )
+    }
 }
 
 /**

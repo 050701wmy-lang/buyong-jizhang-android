@@ -5,9 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +54,9 @@ internal val TOP_BAR_ACTION_ICON_SIZE = 24.dp
 
 /** 顶栏右侧操作按钮到屏幕边缘的留白。 */
 internal val TOP_BAR_ACTION_END_PADDING = 20.dp
+
+/** 相邻顶栏操作按钮之间的统一间距。 */
+internal val TOP_BAR_ACTION_SPACING = 5.dp
 
 /**
  * 表示四个一级功能标签。
@@ -162,6 +167,10 @@ private fun MainScaffold(
                         scrollBehavior = scrollBehavior,
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
+                            if (selectedTab == MainTab.HOME) {
+                                MainAddAccountAction(onClick = onAddAccount)
+                                Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
+                            }
                             MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
                         },
                     )
@@ -172,6 +181,10 @@ private fun MainScaffold(
                         scrollBehavior = scrollBehavior,
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
+                            if (selectedTab == MainTab.HOME) {
+                                MainAddAccountAction(onClick = onAddAccount)
+                                Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
+                            }
                             MainSettingsAction(onClick = { onSelectTab(MainTab.SETTINGS) })
                         },
                     )
@@ -197,9 +210,9 @@ private fun MainScaffold(
             }
         },
         floatingActionButton = {
-            if (selectedTab != MainTab.SETTINGS) {
+            if (selectedTab == MainTab.DETAILS) {
                 FloatingActionButton(
-                    onClick = if (selectedTab == MainTab.HOME) onAddAccount else onOpenManualEntry,
+                    onClick = onOpenManualEntry,
                     modifier = Modifier.offset(x = (-22.5f).dp, y = (-21.5f).dp),
                     containerColor = MiuixTheme.colorScheme.primaryContainer,
                     minWidth = 56.dp,
@@ -207,11 +220,7 @@ private fun MainScaffold(
                 ) {
                     Icon(
                         imageVector = MiuixIcons.Add,
-                        contentDescription = if (selectedTab == MainTab.HOME) {
-                            "新增账户"
-                        } else {
-                            "手动记账"
-                        },
+                        contentDescription = "手动记账",
                         tint = Color.White,
                     )
                 }
@@ -259,6 +268,25 @@ internal fun AccountingBlurTopBar(
                 .accountingBarBlur(backdrop),
         )
         content()
+    }
+}
+
+/**
+ * 显示首页顶栏中位于设置左侧的新增账户入口。
+ */
+@Composable
+private fun MainAddAccountAction(onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        backgroundColor = Color.Transparent,
+        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
+        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.Add,
+            contentDescription = "新增账户",
+            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
+        )
     }
 }
 
