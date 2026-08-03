@@ -25,11 +25,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.TransactionRecord
+import com.vos.accounting.data.amountInCnyMinor
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -37,8 +40,7 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.ChevronBackward
-import top.yukonga.miuix.kmp.icon.extended.ChevronForward
+import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.extended.GridView
 import top.yukonga.miuix.kmp.icon.extended.Months
 import top.yukonga.miuix.kmp.icon.extended.Send
@@ -323,13 +325,17 @@ private fun ReportRangeControls(
             ) {
                 IconButton(
                     onClick = onMoveBackward,
-                    backgroundColor = MiuixTheme.colorScheme.surface,
+                    backgroundColor = Color.Transparent,
                     minWidth = 35.dp,
                     minHeight = 35.dp,
                 ) {
                     Icon(
-                        imageVector = MiuixIcons.ChevronBackward,
+                        imageVector = MiuixIcons.Basic.ArrowRight,
                         contentDescription = "上一周期",
+                        modifier = Modifier
+                            .rotate(180f)
+                            .size(width = 10.dp, height = 16.dp),
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
                     )
                 }
                 Text(
@@ -343,13 +349,19 @@ private fun ReportRangeControls(
                 IconButton(
                     onClick = onMoveForward,
                     enabled = canMoveForward,
-                    backgroundColor = MiuixTheme.colorScheme.surface,
+                    backgroundColor = Color.Transparent,
                     minWidth = 35.dp,
                     minHeight = 35.dp,
                 ) {
                     Icon(
-                        imageVector = MiuixIcons.ChevronForward,
+                        imageVector = MiuixIcons.Basic.ArrowRight,
                         contentDescription = "下一周期",
+                        modifier = Modifier.size(width = 10.dp, height = 16.dp),
+                        tint = if (canMoveForward) {
+                            MiuixTheme.colorScheme.onSurfaceVariantActions
+                        } else {
+                            MiuixTheme.colorScheme.disabledOnSecondaryVariant
+                        },
                     )
                 }
             }
@@ -723,17 +735,17 @@ private fun buildReportData(
     val previousRange = rangeFor(period, shiftAnchor(anchor, period, -1))
     val currentRecords = records.filter { recordDate(it) in range.start..range.end }
     val currentTypeRecords = currentRecords.filter { it.type == selectedType }
-    val currentTotal = currentTypeRecords.sumOf(TransactionRecord::amountMinor)
+    val currentTotal = currentTypeRecords.sumOf(TransactionRecord::amountInCnyMinor)
     val previousTotal = records
         .filter { it.type == selectedType && recordDate(it) in previousRange.start..previousRange.end }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
     val dayCount = ChronoUnit.DAYS.between(range.start, range.end) + 1
     val income = currentRecords
         .filter { it.type == TransactionType.INCOME }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
     val expense = currentRecords
         .filter { it.type == TransactionType.EXPENSE }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
 
     return ReportData(
         range = range,
@@ -748,7 +760,7 @@ private fun buildReportData(
             .map { (name, groupedRecords) ->
                 ReportCategory(
                     name = name,
-                    amountMinor = groupedRecords.sumOf(TransactionRecord::amountMinor),
+                    amountMinor = groupedRecords.sumOf(TransactionRecord::amountInCnyMinor),
                 )
             }
             .sortedByDescending(ReportCategory::amountMinor),
@@ -866,7 +878,7 @@ private fun amountForRange(
     end: LocalDate,
 ): Long = records
     .filter { it.type == selectedType && recordDate(it) in start..end }
-    .sumOf(TransactionRecord::amountMinor)
+    .sumOf(TransactionRecord::amountInCnyMinor)
 
 /**
  * 将账目时间戳转换为设备时区日期。

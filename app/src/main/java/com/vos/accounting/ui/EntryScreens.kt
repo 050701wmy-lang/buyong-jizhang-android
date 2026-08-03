@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -54,7 +55,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.sp
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.CategoryEntity
+import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionDraft
@@ -83,17 +86,13 @@ import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
+import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.BankCards
-import top.yukonga.miuix.kmp.icon.extended.CloudFill
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Close
-import top.yukonga.miuix.kmp.icon.extended.Layers
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Ok
-import top.yukonga.miuix.kmp.icon.extended.Promotions
-import top.yukonga.miuix.kmp.icon.extended.Store
 import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.squircle.squircleClip
@@ -165,6 +164,11 @@ fun ManualEntryScreen(
         !it.isArchived || it.id == transaction?.accountId
     }
     val amountMinor = calculateManualAmount(amountExpression)
+    val currencySymbol = uiState.accounts
+        .firstOrNull { it.id == accountId }
+        ?.let { account -> uiState.currencies.firstOrNull { it.key == account.currencyKey } }
+        ?.symbol
+        ?: "¥"
 
     LaunchedEffect(selectableAccounts) {
         if (selectableAccounts.none { it.id == accountId }) {
@@ -191,6 +195,7 @@ fun ManualEntryScreen(
             innerPadding = innerPadding,
             amountExpression = amountExpression,
             amountMinor = amountMinor,
+            currencySymbol = currencySymbol,
             type = type,
             categories = matchingCategories,
             categoryId = categoryId,
@@ -264,6 +269,7 @@ private fun ManualEntryContent(
     innerPadding: PaddingValues,
     amountExpression: String,
     amountMinor: Long?,
+    currencySymbol: String,
     type: TransactionType,
     categories: List<CategoryEntity>,
     categoryId: Long,
@@ -318,6 +324,7 @@ private fun ManualEntryContent(
             )
             ManualAmountDisplay(
                 amountExpression = amountExpression,
+                currencySymbol = currencySymbol,
                 invalid = amountExpression.isNotBlank() && amountMinor == null,
                 onClick = {
                     focusManager.clearFocus()
@@ -449,6 +456,7 @@ private fun ManualTypeTab(
 @Composable
 private fun ManualAmountDisplay(
     amountExpression: String,
+    currencySymbol: String,
     invalid: Boolean,
     onClick: () -> Unit,
 ) {
@@ -466,7 +474,7 @@ private fun ManualAmountDisplay(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "¥",
+                text = currencySymbol,
                 fontWeight = FontWeight.Bold,
                 fontSize = 28.sp,
             )
@@ -1307,12 +1315,20 @@ fun AccountingWriteErrorDialog(
 @Composable
 fun AccountEditorScreen(
     account: AccountEntity?,
+    accountTypes: List<AccountTypeEntity>,
+    currencies: List<CurrencyEntity>,
+    selectedTypeKey: String,
+    selectedCurrencyKey: String,
+    selectedIconKey: String,
     currentBalanceMinor: Long,
     writeInProgress: Boolean,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
     onSave: (AccountEntity, () -> Unit) -> Unit,
     onArchive: (Long, () -> Unit) -> Unit,
+    onOpenTypePicker: (String) -> Unit,
+    onOpenCurrencyPicker: (String) -> Unit,
+    onOpenIconPicker: (String) -> Unit,
 ) {
     var name by rememberSaveable(account?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(account?.name.orEmpty()))
@@ -1327,13 +1343,21 @@ fun AccountEditorScreen(
     var type by rememberSaveable(account?.id) {
         mutableStateOf(account?.type ?: AccountType.CASH)
     }
+    var typeKey by rememberSaveable(account?.id) {
+        mutableStateOf(selectedTypeKey)
+    }
+    var iconKey by rememberSaveable(account?.id) {
+        mutableStateOf(selectedIconKey)
+    }
+    var currencyKey by rememberSaveable(account?.id) {
+        mutableStateOf(selectedCurrencyKey)
+    }
     var isDefault by rememberSaveable(account?.id) {
         mutableStateOf(account?.isDefault ?: false)
     }
     var isArchived by rememberSaveable(account?.id) {
         mutableStateOf(account?.isArchived ?: false)
     }
-    var showTypePopup by rememberSaveable { mutableStateOf(false) }
     var showBalanceDialog by rememberSaveable { mutableStateOf(false) }
     val balanceMinor = parseSignedMoneyToMinor(balance.text)
     val transactionNetMinor = if (account == null) {
@@ -1343,16 +1367,37 @@ fun AccountEditorScreen(
     }
     val canSave = name.text.isNotBlank() && balanceMinor != null && !writeInProgress
     val scrollBehavior = MiuixScrollBehavior()
+    LaunchedEffect(selectedIconKey) {
+        iconKey = selectedIconKey
+    }
+    LaunchedEffect(selectedTypeKey, accountTypes) {
+        val selectedType = accountTypes.firstOrNull { it.key == selectedTypeKey }
+        if (selectedType != null) {
+            if (iconKey == defaultAccountIconKey(type)) {
+                iconKey = selectedType.iconKey
+            }
+            type = selectedType.baseType
+            typeKey = selectedType.key
+        }
+    }
+    LaunchedEffect(selectedCurrencyKey) {
+        currencyKey = selectedCurrencyKey
+    }
     val saveAccount = {
         onSave(
             (account ?: AccountEntity(
                 name = "",
                 type = type,
+                typeKey = typeKey,
+                currencyKey = currencyKey,
                 openingBalanceMinor = 0,
                 sortOrder = 0,
             )).copy(
                 name = name.text,
                 type = type,
+                typeKey = typeKey,
+                currencyKey = currencyKey,
+                iconKey = iconKey,
                 openingBalanceMinor = (balanceMinor ?: 0) - transactionNetMinor,
                 isDefault = isDefault,
                 isArchived = isArchived,
@@ -1429,59 +1474,77 @@ fun AccountEditorScreen(
                                 .padding(bottom = 12.dp),
                             insideMargin = PaddingValues(0.dp),
                         ) {
-                            Box(modifier = Modifier.fillMaxWidth()) {
-                                BasicComponent(
-                                    title = "账户类型",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    endActions = {
+                            BasicComponent(
+                                title = "账户类型",
+                                modifier = Modifier.fillMaxWidth(),
+                                endActions = {
+                                    Row(
+                                        modifier = Modifier.height(24.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
                                         Text(
-                                            text = accountTypeTitle(type),
+                                            text = accountTypes.firstOrNull { it.key == typeKey }?.name.orEmpty(),
+                                            modifier = Modifier.offset(y = (-1).dp),
                                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                             style = MiuixTheme.textStyles.body2,
                                         )
                                         Icon(
-                                            imageVector = MiuixIcons.Basic.ArrowUpDown,
+                                            imageVector = MiuixIcons.Basic.ArrowRight,
                                             contentDescription = null,
                                             modifier = Modifier
                                                 .padding(start = 6.dp)
                                                 .size(width = 10.dp, height = 16.dp),
-                                            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
                                         )
-                                    },
-                                    onClick = { showTypePopup = true },
-                                )
-                                AccountTypePopup(
-                                    show = showTypePopup,
-                                    selectedType = type,
-                                    onDismiss = { showTypePopup = false },
-                                    onSelect = {
-                                        type = it
-                                        showTypePopup = false
-                                    },
-                                )
-                            }
+                                    }
+                                },
+                                onClick = { onOpenTypePicker(typeKey) },
+                            )
                             BasicComponent(
                                 title = "账户图标",
                                 modifier = Modifier.fillMaxWidth(),
                                 endActions = {
-                                    Icon(
-                                        imageVector = accountTypeIcon(type),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(24.dp),
-                                        tint = MiuixTheme.colorScheme.primary,
-                                    )
+                                    Row(
+                                        modifier = Modifier.height(24.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        AccountIcon(
+                                            iconKey = iconKey,
+                                            modifier = Modifier
+                                                .offset(y = (-1).dp)
+                                                .size(24.dp),
+                                        )
+                                        Icon(
+                                            imageVector = MiuixIcons.Basic.ArrowRight,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .padding(start = 8.dp)
+                                                .size(width = 10.dp, height = 16.dp),
+                                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                        )
+                                    }
                                 },
+                                onClick = { onOpenIconPicker(iconKey) },
                             )
                             BasicComponent(
                                 title = "账户币种",
                                 modifier = Modifier.fillMaxWidth(),
                                 endActions = {
                                     Text(
-                                        text = "人民币",
+                                        text = currencies.firstOrNull { it.key == currencyKey }?.name.orEmpty(),
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                         style = MiuixTheme.textStyles.body2,
                                     )
+                                    Icon(
+                                        imageVector = MiuixIcons.Basic.ArrowRight,
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .padding(start = 6.dp)
+                                            .size(width = 10.dp, height = 16.dp),
+                                        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                    )
                                 },
+                                onClick = { onOpenCurrencyPicker(currencyKey) },
                             )
                             ArrowPreference(
                                 title = "账户余额",
@@ -1673,40 +1736,6 @@ private fun AccountEditorActions(
 }
 
 /**
- * 以 HyperOS 风格弹出列表展示固定账户类型选项。
- */
-@Composable
-private fun AccountTypePopup(
-    show: Boolean,
-    selectedType: AccountType,
-    onDismiss: () -> Unit,
-    onSelect: (AccountType) -> Unit,
-) {
-    WindowListPopup(
-        show = show,
-        popupPositionProvider = ListPopupDefaults.dropdownPositionProvider(
-            horizontalMargin = 12.dp,
-        ),
-        alignment = PopupPositionProvider.Align.End,
-        enableWindowDim = true,
-        onDismissRequest = onDismiss,
-        maxHeight = 520.dp,
-        minWidth = 288.dp,
-    ) {
-        ListPopupColumn {
-            AccountType.entries.forEach { type ->
-                PopupSelectionRow(
-                    title = accountTypeTitle(type),
-                    summary = accountTypeSummary(type),
-                    selected = type == selectedType,
-                    onClick = { onSelect(type) },
-                )
-            }
-        }
-    }
-}
-
-/**
  * 展示可复用的 HyperOS 弹出单选项。
  */
 @Composable
@@ -1817,20 +1846,6 @@ private fun AccountBalanceDialog(
 }
 
 /**
- * 返回账户类型对应的主题图标。
- */
-internal fun accountTypeIcon(type: AccountType): ImageVector = when (type) {
-    AccountType.CASH,
-    AccountType.BANK_CARD,
-    AccountType.CREDIT,
-    -> MiuixIcons.BankCards
-    AccountType.ONLINE -> MiuixIcons.CloudFill
-    AccountType.INVESTMENT -> MiuixIcons.Promotions
-    AccountType.STORED_VALUE -> MiuixIcons.Store
-    AccountType.VIRTUAL -> MiuixIcons.Layers
-}
-
-/**
  * 返回账户类型的中文标题。
  */
 internal fun accountTypeTitle(type: AccountType): String = when (type) {
@@ -1841,19 +1856,6 @@ internal fun accountTypeTitle(type: AccountType): String = when (type) {
     AccountType.INVESTMENT -> "投资账户"
     AccountType.STORED_VALUE -> "储值卡"
     AccountType.VIRTUAL -> "虚拟账户"
-}
-
-/**
- * 返回账户类型在选择页使用的说明文字。
- */
-internal fun accountTypeSummary(type: AccountType): String = when (type) {
-    AccountType.CASH -> "持有的现金资产"
-    AccountType.BANK_CARD -> "银行储蓄卡、借记卡"
-    AccountType.CREDIT -> "银行信用卡、花呗、美团月付等"
-    AccountType.ONLINE -> "支付宝、微信钱包、QQ 钱包等"
-    AccountType.INVESTMENT -> "理财、基金、股票等"
-    AccountType.STORED_VALUE -> "购物卡、饭卡、加油卡等"
-    AccountType.VIRTUAL -> "积分、游戏币等虚拟资产"
 }
 
 /**

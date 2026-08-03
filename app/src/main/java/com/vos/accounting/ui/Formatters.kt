@@ -28,6 +28,12 @@ fun formatDecimalAmount(amountMinor: Long): String {
 }
 
 /**
+ * 使用账户币种符号格式化最小货币单位金额。
+ */
+fun formatCurrencyAmount(amountMinor: Long, symbol: String): String =
+    "$symbol${formatDecimalAmount(amountMinor)}"
+
+/**
  * 将用户输入的十进制金额解析为最小货币单位。
  */
 fun parseMoneyToMinor(text: String): Long? {

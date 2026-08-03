@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.Card
@@ -66,6 +67,7 @@ import java.util.Locale
 @Composable
 fun AccountDetailScreen(
     account: AccountEntity,
+    currency: CurrencyEntity,
     transactions: List<TransactionRecord>,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
@@ -146,6 +148,7 @@ fun AccountDetailScreen(
                     }
                     item {
                         AccountBalanceCard(
+                            currency = currency,
                             balance = balance,
                             income = income,
                             expense = expense,
@@ -159,6 +162,7 @@ fun AccountDetailScreen(
                         monthlyTransactions.forEach { entry ->
                             item(key = entry.key.toString()) {
                                 AccountMonthCard(
+                                    currencySymbol = currency.symbol,
                                     month = entry.key,
                                     records = entry.value,
                                     onEditTransaction = onEditTransaction,
@@ -245,6 +249,7 @@ private fun AccountDetailTopBar(
  */
 @Composable
 private fun AccountBalanceCard(
+    currency: CurrencyEntity,
     balance: Long,
     income: Long,
     expense: Long,
@@ -272,12 +277,12 @@ private fun AccountBalanceCard(
         ) {
             Column {
                 Text(
-                    text = "人民币余额",
+                    text = "${currency.name}余额",
                     color = Color.White.copy(alpha = 0.84f),
                     style = MiuixTheme.textStyles.body2,
                 )
                 Text(
-                    text = formatDecimalAmount(balance),
+                    text = formatCurrencyAmount(balance, currency.symbol),
                     modifier = Modifier.padding(top = 5.dp),
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
@@ -286,12 +291,12 @@ private fun AccountBalanceCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
                 Text(
-                    text = "流入  ${formatDecimalAmount(income)}",
+                    text = "流入  ${formatCurrencyAmount(income, currency.symbol)}",
                     color = Color.White.copy(alpha = 0.92f),
                     style = MiuixTheme.textStyles.body2,
                 )
                 Text(
-                    text = "流出  ${formatDecimalAmount(expense)}",
+                    text = "流出  ${formatCurrencyAmount(expense, currency.symbol)}",
                     color = Color.White.copy(alpha = 0.92f),
                     style = MiuixTheme.textStyles.body2,
                 )
@@ -307,6 +312,7 @@ private fun AccountBalanceCard(
 private fun AccountMonthCard(
     month: YearMonth,
     records: List<TransactionRecord>,
+    currencySymbol: String,
     onEditTransaction: (Long) -> Unit,
 ) {
     val income = records
@@ -335,7 +341,7 @@ private fun AccountMonthCard(
                 style = MiuixTheme.textStyles.body1,
             )
             Text(
-                text = "流入 ${formatDecimalAmount(income)}  流出 ${formatDecimalAmount(expense)}",
+                text = "流入 ${formatCurrencyAmount(income, currencySymbol)}  流出 ${formatCurrencyAmount(expense, currencySymbol)}",
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 style = MiuixTheme.textStyles.footnote1,
             )
@@ -406,9 +412,9 @@ private fun AccountTransactionRow(
         }
         Text(
             text = if (record.type == TransactionType.EXPENSE) {
-                "-${formatDecimalAmount(record.amountMinor)}"
+                "-${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
             } else {
-                "+${formatDecimalAmount(record.amountMinor)}"
+                "+${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
             },
             fontWeight = FontWeight.Bold,
             style = MiuixTheme.textStyles.body1,

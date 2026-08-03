@@ -17,6 +17,8 @@ class AiBookkeepingParserTest {
             id = 1,
             name = "现金",
             type = AccountType.CASH,
+            typeKey = "cash",
+            currencyKey = "cny",
             openingBalanceMinor = 0,
             sortOrder = 0,
         ),

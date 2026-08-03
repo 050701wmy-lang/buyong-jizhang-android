@@ -57,6 +57,8 @@ class AccountingDatabaseTest {
             AccountEntity(
                 name = "银行卡",
                 type = AccountType.BANK_CARD,
+                typeKey = "bank_card",
+                currencyKey = "cny",
                 openingBalanceMinor = 0,
                 sortOrder = 0,
                 isDefault = true,
@@ -72,6 +74,28 @@ class AccountingDatabaseTest {
         }
         assertEquals(1, activeDefaults.size)
         assertEquals("现金", activeDefaults.single().name)
+    }
+
+    /**
+     * 验证自定义账户类型会持久化名称和可选说明。
+     */
+    @Test
+    fun customAccountTypeIsPersisted() = runBlocking {
+        repository.initialize()
+
+        val typeKey = repository.addAccountType("礼品卡", " 商场礼品余额 ")
+        val accountType = dao.findAccountType(typeKey)
+
+        assertEquals("礼品卡", accountType?.name)
+        assertEquals("商场礼品余额", accountType?.summary)
+        assertEquals(AccountType.VIRTUAL, accountType?.baseType)
+
+        repository.updateAccountType(typeKey, "商超卡", "购物余额")
+        assertEquals("商超卡", dao.findAccountType(typeKey)?.name)
+        assertEquals("购物余额", dao.findAccountType(typeKey)?.summary)
+
+        repository.deleteAccountType(typeKey)
+        assertEquals(null, dao.findAccountType(typeKey))
     }
 
     /**

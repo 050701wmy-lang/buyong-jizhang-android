@@ -15,6 +15,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
+import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionType
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
@@ -62,6 +63,33 @@ data class AccountDetailRoute(
 @Serializable
 data class AccountEditorRoute(
     val accountId: Long = 0,
+    val iconKey: String? = null,
+    val typeKey: String? = null,
+    val currencyKey: String? = null,
+) : AccountingRoute
+
+/**
+ * 表示账户币种选择二级页面。
+ */
+@Serializable
+data class CurrencyRoute(
+    val selectedKey: String,
+) : AccountingRoute
+
+/**
+ * 表示账户类型选择二级页面。
+ */
+@Serializable
+data class AccountTypeRoute(
+    val selectedKey: String,
+) : AccountingRoute
+
+/**
+ * 表示账户图标选择二级页面。
+ */
+@Serializable
+data class AccountIconRoute(
+    val selectedKey: String,
 ) : AccountingRoute
 
 /**
@@ -166,9 +194,11 @@ fun AccountingApp() {
                     }
                     entry<AccountDetailRoute> { route ->
                         val account = uiState.accounts.firstOrNull { it.id == route.accountId }
-                        if (account != null) {
+                        val currency = uiState.currencies.firstOrNull { it.key == account?.currencyKey }
+                        if (account != null && currency != null) {
                             AccountDetailScreen(
                                 account = account,
+                                currency = currency,
                                 transactions = uiState.transactions,
                                 backdrop = backdrop,
                                 onBack = { backStack.removeAt(backStack.lastIndex) },
@@ -196,12 +226,71 @@ fun AccountingApp() {
                         }
                         AccountEditorScreen(
                             account = account,
+                            accountTypes = uiState.accountTypes,
+                            currencies = uiState.currencies,
+                            selectedTypeKey = route.typeKey ?: account?.typeKey ?: "cash",
+                            selectedCurrencyKey = route.currencyKey ?: account?.currencyKey ?: "cny",
+                            selectedIconKey = route.iconKey ?: account?.iconKey
+                                ?: defaultAccountIconKey(AccountType.CASH),
                             currentBalanceMinor = currentBalanceMinor,
                             writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onSave = viewModel::saveAccount,
                             onArchive = viewModel::archiveAccount,
+                            onOpenTypePicker = { navigateTo(AccountTypeRoute(it)) },
+                            onOpenCurrencyPicker = { navigateTo(CurrencyRoute(it)) },
+                            onOpenIconPicker = { navigateTo(AccountIconRoute(it)) },
+                        )
+                    }
+                    entry<AccountTypeRoute> { route ->
+                        AccountTypeScreen(
+                            accountTypes = uiState.accountTypes,
+                            selectedKey = route.selectedKey,
+                            writeInProgress = uiState.writeInProgress,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onSelect = { typeKey ->
+                                val editorIndex = backStack.lastIndex - 1
+                                val editor = backStack[editorIndex] as AccountEditorRoute
+                                backStack[editorIndex] = editor.copy(typeKey = typeKey)
+                                backStack.removeAt(backStack.lastIndex)
+                            },
+                            onAdd = viewModel::addAccountType,
+                            onUpdate = viewModel::updateAccountType,
+                            onDelete = viewModel::deleteAccountType,
+                        )
+                    }
+                    entry<CurrencyRoute> { route ->
+                        CurrencyScreen(
+                            currencies = uiState.currencies,
+                            selectedKey = route.selectedKey,
+                            writeInProgress = uiState.writeInProgress,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onSelect = { currencyKey ->
+                                val editorIndex = backStack.lastIndex - 1
+                                val editor = backStack[editorIndex] as AccountEditorRoute
+                                backStack[editorIndex] = editor.copy(currencyKey = currencyKey)
+                                backStack.removeAt(backStack.lastIndex)
+                            },
+                            onAdd = viewModel::addCurrency,
+                            onUpdate = viewModel::updateCurrency,
+                            onDelete = viewModel::deleteCurrency,
+                            onAutoRateChange = viewModel::setCurrencyAutoRate,
+                        )
+                    }
+                    entry<AccountIconRoute> { route ->
+                        AccountIconScreen(
+                            selectedKey = route.selectedKey,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onSelect = { iconKey ->
+                                val editorIndex = backStack.lastIndex - 1
+                                val editor = backStack[editorIndex] as AccountEditorRoute
+                                backStack[editorIndex] = editor.copy(iconKey = iconKey)
+                                backStack.removeAt(backStack.lastIndex)
+                            },
                         )
                     }
                     entry<SettingsRoute> {

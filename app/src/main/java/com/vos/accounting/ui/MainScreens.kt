@@ -37,8 +37,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountTypeEntity
+import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
-import com.vos.accounting.model.AccountType
+import com.vos.accounting.data.amountInCnyMinor
+import com.vos.accounting.data.convertToCnyMinor
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -103,8 +106,12 @@ fun HomeScreen(
     val accountBalances = activeAccounts.associateWith { account ->
         calculateAccountBalance(account, uiState.transactions)
     }
-    val totalAssets = accountBalances.values.sumOf { maxOf(it, 0L) }
-    val totalLiabilities = accountBalances.values.sumOf { -minOf(it, 0L) }
+    val currencies = uiState.currencies.associateBy(CurrencyEntity::key)
+    val cnyBalances = accountBalances.mapValues { (account, balance) ->
+        convertToCnyMinor(balance, currencies.getValue(account.currencyKey).rateToCnyScaled)
+    }
+    val totalAssets = cnyBalances.values.sumOf { maxOf(it, 0L) }
+    val totalLiabilities = cnyBalances.values.sumOf { -minOf(it, 0L) }
 
     MainTabList(innerPadding = innerPadding) {
         item {
@@ -114,15 +121,17 @@ fun HomeScreen(
                 totalLiabilities = totalLiabilities,
             )
         }
-        AccountType.entries.forEach { type ->
-            val accounts = activeAccounts.filter { it.type == type }
+        uiState.accountTypes.forEach { type ->
+            val accounts = activeAccounts.filter { it.typeKey == type.key }
             if (accounts.isNotEmpty()) {
-                item(key = type.name) {
+                item(key = type.key) {
                     HomeAccountGroup(
                         modifier = Modifier.animateItem(),
                         type = type,
                         accounts = accounts,
                         balances = accountBalances,
+                        cnyBalances = cnyBalances,
+                        currencies = currencies,
                         onOpenAccount = onOpenAccount,
                     )
                 }
@@ -214,12 +223,14 @@ private fun HomeAssetCard(
 @Composable
 private fun HomeAccountGroup(
     modifier: Modifier = Modifier,
-    type: AccountType,
+    type: AccountTypeEntity,
     accounts: List<AccountEntity>,
     balances: Map<AccountEntity, Long>,
+    cnyBalances: Map<AccountEntity, Long>,
+    currencies: Map<String, CurrencyEntity>,
     onOpenAccount: (Long) -> Unit,
 ) {
-    var expanded by rememberSaveable(type.name) { mutableStateOf(true) }
+    var expanded by rememberSaveable(type.key) { mutableStateOf(true) }
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) -90f else 90f,
         animationSpec = folmeSpring(damping = 1f, response = 0.35f),
@@ -240,19 +251,19 @@ private fun HomeAccountGroup(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = accountTypeTitle(type),
+                text = type.name,
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.Bold,
                 style = MiuixTheme.textStyles.body1,
             )
             Text(
-                text = formatDecimalAmount(accounts.sumOf { balances.getValue(it) }),
+                text = formatDecimalAmount(accounts.sumOf { cnyBalances.getValue(it) }),
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 style = MiuixTheme.textStyles.body2,
             )
             Icon(
                 imageVector = MiuixIcons.ChevronForward,
-                contentDescription = if (expanded) "收起${accountTypeTitle(type)}" else "展开${accountTypeTitle(type)}",
+                contentDescription = if (expanded) "收起${type.name}" else "展开${type.name}",
                 modifier = Modifier
                     .padding(start = 6.dp)
                     .rotate(arrowRotation)
@@ -269,6 +280,7 @@ private fun HomeAccountGroup(
                     HomeAccountRow(
                         account = account,
                         balance = balances.getValue(account),
+                        currencySymbol = currencies.getValue(account.currencyKey).symbol,
                         onClick = { onOpenAccount(account.id) },
                     )
                 }
@@ -284,6 +296,7 @@ private fun HomeAccountGroup(
 private fun HomeAccountRow(
     account: AccountEntity,
     balance: Long,
+    currencySymbol: String,
     onClick: () -> Unit,
 ) {
     Row(
@@ -305,11 +318,9 @@ private fun HomeAccountRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = accountTypeIcon(account.type),
-                contentDescription = null,
+            AccountIcon(
+                iconKey = account.iconKey,
                 modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-                tint = MiuixTheme.colorScheme.primary.copy(alpha = 0.76f),
             )
         }
         Text(
@@ -320,7 +331,7 @@ private fun HomeAccountRow(
             style = MiuixTheme.textStyles.body1,
         )
         Text(
-            text = formatDecimalAmount(balance),
+            text = formatCurrencyAmount(balance, currencySymbol),
             fontWeight = FontWeight.Medium,
             style = MiuixTheme.textStyles.body1,
         )
@@ -356,7 +367,7 @@ fun DetailsScreen(
         .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
     val todayExpense = uiState.transactions
         .filter { it.type == TransactionType.EXPENSE && detailsRecordDate(it) == today }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
     val monthRecords = uiState.transactions.filter {
         YearMonth.from(detailsRecordDate(it)) == currentMonth
     }
@@ -367,10 +378,10 @@ fun DetailsScreen(
                 todayExpense = todayExpense,
                 monthExpense = monthRecords
                     .filter { it.type == TransactionType.EXPENSE }
-                    .sumOf(TransactionRecord::amountMinor),
+                    .sumOf(TransactionRecord::amountInCnyMinor),
                 monthIncome = monthRecords
                     .filter { it.type == TransactionType.INCOME }
-                    .sumOf(TransactionRecord::amountMinor),
+                    .sumOf(TransactionRecord::amountInCnyMinor),
             )
         }
         if (uiState.transactions.isEmpty()) {
@@ -491,10 +502,10 @@ private fun DetailsDateGroup(
 ) {
     val expense = records
         .filter { it.type == TransactionType.EXPENSE }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
     val income = records
         .filter { it.type == TransactionType.INCOME }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::amountInCnyMinor)
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -588,9 +599,9 @@ private fun DetailsTransactionRow(
         }
         Text(
             text = if (record.type == TransactionType.EXPENSE) {
-                "-${formatDecimalAmount(record.amountMinor)}"
+                "-${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
             } else {
-                "+${formatDecimalAmount(record.amountMinor)}"
+                "+${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
             },
             modifier = Modifier.padding(start = 12.dp),
             fontWeight = FontWeight.Bold,

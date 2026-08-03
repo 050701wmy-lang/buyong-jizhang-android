@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.vos.accounting.ai.AiBookkeepingParser
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.CategoryEntity
+import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.CategoryTotal
 import com.vos.accounting.model.OverviewTotals
@@ -32,6 +34,8 @@ data class AccountingWriteState(
  */
 data class AccountingUiState(
     val accounts: List<AccountEntity> = emptyList(),
+    val accountTypes: List<AccountTypeEntity> = emptyList(),
+    val currencies: List<CurrencyEntity> = emptyList(),
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionRecord> = emptyList(),
     val totals: OverviewTotals = OverviewTotals(0, 0),
@@ -55,15 +59,25 @@ class AccountingViewModel(
     private val aiError = MutableStateFlow<String?>(null)
     private val writeState = MutableStateFlow(AccountingWriteState())
 
-    private val ledgerState = combine(
+    private val accountState = combine(
         repository.accounts,
+        repository.accountTypes,
+        repository.currencies,
+    ) { accounts, accountTypes, currencies ->
+        Triple(accounts, accountTypes, currencies)
+    }
+
+    private val ledgerState = combine(
+        accountState,
         repository.categories,
         repository.transactions,
         repository.overviewTotals,
         repository.expenseCategoryTotals,
-    ) { accounts, categories, transactions, totals, categoryTotals ->
+    ) { accountState, categories, transactions, totals, categoryTotals ->
         AccountingUiState(
-            accounts = accounts,
+            accounts = accountState.first,
+            accountTypes = accountState.second,
+            currencies = accountState.third,
             categories = categories,
             transactions = transactions,
             totals = totals,
@@ -97,6 +111,7 @@ class AccountingViewModel(
     init {
         viewModelScope.launch {
             repository.initialize()
+            repository.refreshBuiltinCurrencyRates()
         }
     }
 
@@ -205,6 +220,93 @@ class AccountingViewModel(
         launchWrite(
             action = { repository.saveAccount(account) },
             onSuccess = { onSaved() },
+        )
+    }
+
+    /**
+     * 新增自定义币种并返回其持久化标识。
+     */
+    fun addCurrency(
+        name: String,
+        symbol: String,
+        rateToCnyScaled: Long,
+        onAdded: (String) -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.addCurrency(name, symbol, rateToCnyScaled) },
+            onSuccess = onAdded,
+        )
+    }
+
+    /** 更新币种的可编辑信息与手动汇率。 */
+    fun updateCurrency(
+        currencyKey: String,
+        name: String,
+        symbol: String,
+        rateToCnyScaled: Long,
+        onUpdated: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.updateCurrency(currencyKey, name, symbol, rateToCnyScaled) },
+            onSuccess = { onUpdated() },
+        )
+    }
+
+    /** 删除未被账户使用的自定义币种。 */
+    fun deleteCurrency(currencyKey: String, onDeleted: () -> Unit) {
+        launchWrite(
+            action = { repository.deleteCurrency(currencyKey) },
+            onSuccess = { onDeleted() },
+        )
+    }
+
+    /** 切换预置币种是否使用自动汇率。 */
+    fun setCurrencyAutoRate(currencyKey: String, enabled: Boolean, onUpdated: () -> Unit) {
+        launchWrite(
+            action = { repository.setCurrencyAutoRate(currencyKey, enabled) },
+            onSuccess = { onUpdated() },
+        )
+    }
+
+    /**
+     * 新增自定义账户类型并把新类型标识返回选择页。
+     */
+    fun addAccountType(
+        name: String,
+        summary: String,
+        onAdded: (String) -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.addAccountType(name, summary) },
+            onSuccess = onAdded,
+        )
+    }
+
+    /**
+     * 删除未被账户使用的自定义账户类型。
+     */
+    fun deleteAccountType(
+        typeKey: String,
+        onDeleted: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.deleteAccountType(typeKey) },
+            onSuccess = { onDeleted() },
+        )
+    }
+
+    /**
+     * 更新自定义账户类型的名称与可选说明。
+     */
+    fun updateAccountType(
+        typeKey: String,
+        name: String,
+        summary: String,
+        onUpdated: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.updateAccountType(typeKey, name, summary) },
+            onSuccess = { onUpdated() },
         )
     }
 
