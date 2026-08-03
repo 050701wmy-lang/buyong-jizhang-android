@@ -657,6 +657,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
+    onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
 ) {
     var showThemePopup by rememberSaveable { mutableStateOf(false) }
     SecondaryScaffold(
@@ -711,6 +712,13 @@ fun SettingsScreen(
                         onCheckedChange = onFollowSystemColorChange,
                         title = "跟随系统配色",
                         summary = "关闭后使用固定品牌配色",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.predictiveBackAnimationEnabled,
+                        onCheckedChange = onPredictiveBackAnimationEnabledChange,
+                        title = "预测性返回动画",
+                        summary = "开启后边缘返回会随手势移动",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

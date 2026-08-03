@@ -157,6 +157,8 @@ data class AppSettingsEntity(
     val themeMode: String = "SYSTEM",
     @ColumnInfo(name = "follow_system_color")
     val followSystemColor: Boolean = true,
+    @ColumnInfo(name = "predictive_back_animation_enabled", defaultValue = "0")
+    val predictiveBackAnimationEnabled: Boolean = false,
 )
 
 /**
@@ -339,6 +341,12 @@ interface AccountingDao {
      */
     @Query("UPDATE app_settings SET follow_system_color = :followSystemColor WHERE id = 1")
     suspend fun updateFollowSystemColor(followSystemColor: Boolean)
+
+    /**
+     * 只更新应用是否启用预测性返回动画。
+     */
+    @Query("UPDATE app_settings SET predictive_back_animation_enabled = :enabled WHERE id = 1")
+    suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean)
 
     /**
      * 返回设置行数量。
@@ -665,7 +673,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -682,7 +690,15 @@ abstract class AccountingDatabase : RoomDatabase() {
             context,
             AccountingDatabase::class.java,
             "accounting.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+        ).addMigrations(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+        ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
             /**
@@ -850,6 +866,17 @@ abstract class AccountingDatabase : RoomDatabase() {
                 )
                 connection.executeMigrationSql(
                     "UPDATE currencies SET auto_rate_enabled = 0 WHERE is_builtin = 0",
+                )
+            }
+        }
+
+        internal val MIGRATION_7_8 = object : Migration(7, 8) {
+            /**
+             * 为应用设置补充默认关闭的预测性返回动画开关。
+             */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN predictive_back_animation_enabled INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

@@ -46,6 +46,7 @@ data class AccountingUiState(
     val writeError: String? = null,
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
     val followSystemColor: Boolean = true,
+    val predictiveBackAnimationEnabled: Boolean = false,
 )
 
 /**
@@ -101,6 +102,7 @@ class AccountingViewModel(
                 AccountingThemeMode.entries.firstOrNull { it.name == mode }
             } ?: AccountingThemeMode.SYSTEM,
             followSystemColor = settings?.followSystemColor ?: true,
+            predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -164,6 +166,15 @@ class AccountingViewModel(
     fun updateFollowSystemColor(followSystemColor: Boolean) {
         viewModelScope.launch {
             repository.updateFollowSystemColor(followSystemColor)
+        }
+    }
+
+    /**
+     * 更新应用是否启用预测性返回动画。
+     */
+    fun updatePredictiveBackAnimationEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updatePredictiveBackAnimationEnabled(enabled)
         }
     }
 

@@ -66,6 +66,13 @@ class AccountingRepository(
     }
 
     /**
+     * 更新应用是否启用预测性返回动画。
+     */
+    suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean) {
+        dao.updatePredictiveBackAnimationEnabled(enabled)
+    }
+
+    /**
      * 把已经确认的草稿写入正式账目。
      */
     suspend fun saveTransaction(draft: TransactionDraft): Long {

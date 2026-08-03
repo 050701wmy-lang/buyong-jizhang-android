@@ -203,10 +203,41 @@ class AccountingMigrationTest {
     }
 
     /**
+     * 验证 v7 设置升级后新增的预测性返回动画默认关闭。
+     */
+    @Test
+    fun migrateVersionSevenToVersionEight() {
+        helper.createDatabase(DATABASE_NAME, 7).apply {
+            execSQL(
+                "INSERT INTO app_settings (id, theme_mode, follow_system_color) " +
+                    "VALUES (1, 'DARK', 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            8,
+            true,
+            AccountingDatabase.MIGRATION_7_8,
+        )
+        migrated.query(
+            "SELECT theme_mode, follow_system_color, predictive_back_animation_enabled " +
+                "FROM app_settings WHERE id = 1",
+        ).use {
+            it.moveToFirst()
+            assertEquals("DARK", it.getString(0))
+            assertEquals(0, it.getInt(1))
+            assertEquals(0, it.getInt(2))
+        }
+        migrated.close()
+    }
+
+    /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */
     @Test
-    fun migrateVersionOneToVersionSeven() {
+    fun migrateVersionOneToVersionEight() {
         helper.createDatabase(DATABASE_NAME, 1).apply {
             execSQL(
                 "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order) " +
@@ -221,7 +252,7 @@ class AccountingMigrationTest {
 
         val migrated = helper.runMigrationsAndValidate(
             DATABASE_NAME,
-            7,
+            8,
             true,
             AccountingDatabase.MIGRATION_1_2,
             AccountingDatabase.MIGRATION_2_3,
@@ -229,6 +260,7 @@ class AccountingMigrationTest {
             AccountingDatabase.MIGRATION_4_5,
             AccountingDatabase.MIGRATION_5_6,
             AccountingDatabase.MIGRATION_6_7,
+            AccountingDatabase.MIGRATION_7_8,
         )
         migrated.query("SELECT is_default, is_archived FROM accounts WHERE id = 1").use {
             it.moveToFirst()
@@ -260,6 +292,10 @@ class AccountingMigrationTest {
         migrated.query("SELECT auto_rate_enabled FROM currencies WHERE `key` = 'cny'").use {
             it.moveToFirst()
             assertEquals(1, it.getInt(0))
+        }
+        migrated.query("SELECT predictive_back_animation_enabled FROM app_settings WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
         }
         migrated.close()
     }

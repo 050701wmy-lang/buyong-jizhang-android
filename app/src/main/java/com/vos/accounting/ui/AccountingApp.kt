@@ -1,5 +1,6 @@
 package com.vos.accounting.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -300,6 +301,8 @@ fun AccountingApp() {
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onThemeModeChange = viewModel::updateThemeMode,
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
+                            onPredictiveBackAnimationEnabledChange =
+                                viewModel::updatePredictiveBackAnimationEnabled,
                         )
                     }
                     entry<AiEntryRoute> {
@@ -315,6 +318,10 @@ fun AccountingApp() {
                         )
                     }
                 },
+            )
+            BackHandler(
+                enabled = !uiState.predictiveBackAnimationEnabled && backStack.size > 1,
+                onBack = { backStack.removeAt(backStack.lastIndex) },
             )
             AccountingWriteErrorDialog(
                 message = uiState.writeError,
