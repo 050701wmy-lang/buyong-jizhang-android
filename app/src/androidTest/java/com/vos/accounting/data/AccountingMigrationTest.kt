@@ -86,6 +86,48 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /**
+     * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
+     */
+    @Test
+    fun migrateVersionOneToVersionThree() {
+        helper.createDatabase(DATABASE_NAME, 1).apply {
+            execSQL(
+                "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order) " +
+                    "VALUES (1, '现金', 'CASH', 5000, 0)",
+            )
+            execSQL(
+                "INSERT INTO categories (id, name, type, sort_order) " +
+                    "VALUES (1, '餐饮', 'EXPENSE', 0)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            3,
+            true,
+            AccountingDatabase.MIGRATION_1_2,
+            AccountingDatabase.MIGRATION_2_3,
+        )
+        migrated.query("SELECT is_default, is_archived FROM accounts WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+            assertEquals(0, it.getInt(1))
+        }
+        migrated.query("SELECT icon_key, is_archived FROM categories WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals("store", it.getString(0))
+            assertEquals(0, it.getInt(1))
+        }
+        migrated.query("SELECT theme_mode, follow_system_color FROM app_settings WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals("SYSTEM", it.getString(0))
+            assertEquals(1, it.getInt(1))
+        }
+        migrated.close()
+    }
+
     private companion object {
         const val DATABASE_NAME = "accounting_migration_test"
     }

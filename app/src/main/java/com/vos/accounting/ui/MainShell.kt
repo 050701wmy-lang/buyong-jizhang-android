@@ -4,24 +4,36 @@ import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.FabPosition
 import top.yukonga.miuix.kmp.basic.Icon
@@ -160,8 +172,25 @@ private fun MainScaffold(
     onOpenSettings: () -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
+    var mainViewportWidth by remember { mutableIntStateOf(0) }
+    val pagerState = if (isWide) {
+        null
+    } else {
+        rememberPagerState(
+            initialPage = selectedTab.ordinal,
+            pageCount = { MainTab.entries.size },
+        )
+    }
+    val coroutineScope = rememberCoroutineScope()
+    if (pagerState != null) {
+        LaunchedEffect(pagerState.currentPage) {
+            onSelectTab(MainTab.entries[pagerState.currentPage])
+        }
+    }
     Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = modifier
+            .onSizeChanged { mainViewportWidth = it.width }
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             AccountingBlurTopBar(backdrop = backdrop) {
                 if (isWide) {
@@ -205,7 +234,11 @@ private fun MainScaffold(
                     MainTab.entries.forEach { tab ->
                         NavigationBarItem(
                             selected = selectedTab == tab,
-                            onClick = { onSelectTab(tab) },
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState?.animateScrollToPage(tab.ordinal)
+                                }
+                            },
                             icon = tab.icon,
                             label = tab.title,
                         )
@@ -214,10 +247,21 @@ private fun MainScaffold(
             }
         },
         floatingActionButton = {
-            if (selectedTab == MainTab.DETAILS) {
+            val mobilePagerState = pagerState
+            if ((isWide && selectedTab == MainTab.DETAILS) ||
+                (mobilePagerState != null && mainViewportWidth > 0)
+            ) {
                 FloatingActionButton(
                     onClick = onOpenManualEntry,
-                    modifier = Modifier.offset(x = (-22.5f).dp, y = (-21.5f).dp),
+                    modifier = Modifier
+                        .offset(x = (-22.5f).dp, y = (-21.5f).dp)
+                        .graphicsLayer {
+                            if (mobilePagerState != null) {
+                                translationX = mobilePagerState.getOffsetDistanceInPages(
+                                    MainTab.DETAILS.ordinal,
+                                ) * mainViewportWidth
+                            }
+                        },
                     containerColor = MiuixTheme.colorScheme.primaryContainer,
                     minWidth = 56.dp,
                     minHeight = 56.dp,
@@ -234,28 +278,88 @@ private fun MainScaffold(
     ) { innerPadding ->
         val saveableStateHolder = rememberSaveableStateHolder()
         Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
-            saveableStateHolder.SaveableStateProvider(selectedTab) {
-                when (selectedTab) {
-                    MainTab.HOME -> HomeScreen(
+            if (pagerState == null) {
+                saveableStateHolder.SaveableStateProvider(selectedTab) {
+                    MainTabContent(
+                        tab = selectedTab,
                         uiState = uiState,
                         innerPadding = innerPadding,
                         onOpenAccount = onOpenAccount,
+                        onOpenTransactionEdit = onOpenTransactionEdit,
                     )
-
-                    MainTab.DETAILS -> DetailsScreen(
-                        uiState = uiState,
-                        innerPadding = innerPadding,
-                        onEditTransaction = onOpenTransactionEdit,
-                    )
-
-                    MainTab.STATISTICS -> StatisticsScreen(
-                        uiState = uiState,
-                        innerPadding = innerPadding,
-                    )
-
                 }
+            } else {
+                MainTabPager(
+                    pagerState = pagerState,
+                    saveableStateHolder = saveableStateHolder,
+                    uiState = uiState,
+                    innerPadding = innerPadding,
+                    onOpenAccount = onOpenAccount,
+                    onOpenTransactionEdit = onOpenTransactionEdit,
+                )
             }
         }
+    }
+}
+
+/**
+ * 在手机端承载三个一级页面并提供水平手势切换。
+ */
+@Composable
+private fun MainTabPager(
+    pagerState: PagerState,
+    saveableStateHolder: SaveableStateHolder,
+    uiState: AccountingUiState,
+    innerPadding: PaddingValues,
+    onOpenAccount: (Long) -> Unit,
+    onOpenTransactionEdit: (Long) -> Unit,
+) {
+    HorizontalPager(
+        state = pagerState,
+        modifier = Modifier.fillMaxSize(),
+        key = { MainTab.entries[it] },
+    ) { page ->
+        val tab = MainTab.entries[page]
+        saveableStateHolder.SaveableStateProvider(tab) {
+            MainTabContent(
+                tab = tab,
+                uiState = uiState,
+                innerPadding = innerPadding,
+                onOpenAccount = onOpenAccount,
+                onOpenTransactionEdit = onOpenTransactionEdit,
+            )
+        }
+    }
+}
+
+/**
+ * 根据一级标签显示对应页面内容。
+ */
+@Composable
+private fun MainTabContent(
+    tab: MainTab,
+    uiState: AccountingUiState,
+    innerPadding: PaddingValues,
+    onOpenAccount: (Long) -> Unit,
+    onOpenTransactionEdit: (Long) -> Unit,
+) {
+    when (tab) {
+        MainTab.HOME -> HomeScreen(
+            uiState = uiState,
+            innerPadding = innerPadding,
+            onOpenAccount = onOpenAccount,
+        )
+
+        MainTab.DETAILS -> DetailsScreen(
+            uiState = uiState,
+            innerPadding = innerPadding,
+            onEditTransaction = onOpenTransactionEdit,
+        )
+
+        MainTab.STATISTICS -> StatisticsScreen(
+            uiState = uiState,
+            innerPadding = innerPadding,
+        )
     }
 }
 

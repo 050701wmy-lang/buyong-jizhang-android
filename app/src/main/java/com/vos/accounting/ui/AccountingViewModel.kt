@@ -135,14 +135,20 @@ class AccountingViewModel(
     }
 
     /**
-     * 更新应用外观设置。
+     * 更新应用外观的明暗模式。
      */
-    fun updateSettings(
-        themeMode: AccountingThemeMode,
-        followSystemColor: Boolean,
-    ) {
+    fun updateThemeMode(themeMode: AccountingThemeMode) {
         viewModelScope.launch {
-            repository.saveSettings(themeMode.name, followSystemColor)
+            repository.updateThemeMode(themeMode.name)
+        }
+    }
+
+    /**
+     * 更新应用是否跟随系统配色。
+     */
+    fun updateFollowSystemColor(followSystemColor: Boolean) {
+        viewModelScope.launch {
+            repository.updateFollowSystemColor(followSystemColor)
         }
     }
 

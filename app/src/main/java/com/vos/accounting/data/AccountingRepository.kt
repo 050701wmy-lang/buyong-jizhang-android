@@ -29,19 +29,17 @@ class AccountingRepository(
     }
 
     /**
-     * 写入应用外观设置。
+     * 更新应用外观的明暗模式。
      */
-    suspend fun saveSettings(
-        themeMode: String,
-        followSystemColor: Boolean,
-    ) {
-        dao.upsertSettings(
-            AppSettingsEntity(
-                id = 1,
-                themeMode = themeMode,
-                followSystemColor = followSystemColor,
-            ),
-        )
+    suspend fun updateThemeMode(themeMode: String) {
+        dao.updateThemeMode(themeMode)
+    }
+
+    /**
+     * 更新应用是否跟随系统配色。
+     */
+    suspend fun updateFollowSystemColor(followSystemColor: Boolean) {
+        dao.updateFollowSystemColor(followSystemColor)
     }
 
     /**

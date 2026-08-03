@@ -84,6 +84,12 @@ internal val GROUPED_CARD_ICON_SIZE = 24.dp
 /** 带组头列表 Card 内容行图标容器的圆角尺寸。 */
 internal val GROUPED_CARD_ICON_CORNER_SIZE = 12.dp
 
+/** 顶部数据 Hero Card 的统一高度。 */
+internal val HERO_CARD_HEIGHT = 168.dp
+
+/** 顶部数据 Hero Card 的统一内容内边距。 */
+internal val HERO_CARD_CONTENT_PADDING = 20.dp
+
 /**
  * 展示余额、快捷记账入口与最近账目。
  */
@@ -143,7 +149,7 @@ private fun HomeAssetCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(168.dp)
+                .height(HERO_CARD_HEIGHT)
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
@@ -167,7 +173,7 @@ private fun HomeAssetCard(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(HERO_CARD_CONTENT_PADDING),
                 verticalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column {
@@ -403,19 +409,27 @@ private fun DetailsSummaryCard(
             color = MiuixTheme.colorScheme.primary.copy(alpha = 0.09f),
         ),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "今日支出（元）",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.body2,
-            )
-            Text(
-                text = formatDecimalAmount(todayExpense),
-                modifier = Modifier.padding(top = 7.dp, bottom = 16.dp),
-                color = MiuixTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                style = MiuixTheme.textStyles.title2,
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(HERO_CARD_HEIGHT)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Text(
+                    text = "今日支出（元）",
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.body2,
+                )
+                Text(
+                    text = formatDecimalAmount(todayExpense),
+                    modifier = Modifier.padding(top = 7.dp),
+                    color = MiuixTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    style = MiuixTheme.textStyles.title2,
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -897,7 +911,7 @@ private fun TransactionRow(record: TransactionRecord) {
  * 展示无数据时的静态说明卡片。
  */
 @Composable
-private fun EmptyCard(text: String) {
+internal fun EmptyCard(text: String) {
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -913,4 +927,3 @@ private fun EmptyCard(text: String) {
         )
     }
 }
-

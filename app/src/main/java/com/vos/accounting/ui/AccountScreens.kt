@@ -153,19 +153,7 @@ fun AccountDetailScreen(
                     }
                     if (monthlyTransactions.isEmpty()) {
                         item {
-                            Card(
-                                modifier = Modifier
-                                    .padding(horizontal = 12.dp)
-                                    .padding(bottom = 12.dp),
-                            ) {
-                                Text(
-                                    text = "暂无账目",
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 36.dp),
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            }
+                            EmptyCard(text = "暂无账目")
                         }
                     } else {
                         monthlyTransactions.forEach { entry ->
@@ -270,7 +258,7 @@ private fun AccountBalanceCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(168.dp)
+                .height(HERO_CARD_HEIGHT)
                 .background(
                     Brush.linearGradient(
                         listOf(
@@ -279,20 +267,23 @@ private fun AccountBalanceCard(
                         ),
                     ),
                 )
-                .padding(20.dp),
+                .padding(HERO_CARD_CONTENT_PADDING),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(
-                text = "人民币余额",
-                color = Color.White.copy(alpha = 0.84f),
-                style = MiuixTheme.textStyles.body2,
-            )
-            Text(
-                text = formatDecimalAmount(balance),
-                modifier = Modifier.padding(top = 8.dp, bottom = 22.dp),
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                style = MiuixTheme.textStyles.title1,
-            )
+            Column {
+                Text(
+                    text = "人民币余额",
+                    color = Color.White.copy(alpha = 0.84f),
+                    style = MiuixTheme.textStyles.body2,
+                )
+                Text(
+                    text = formatDecimalAmount(balance),
+                    modifier = Modifier.padding(top = 5.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MiuixTheme.textStyles.title1,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(28.dp)) {
                 Text(
                     text = "流入  ${formatDecimalAmount(income)}",

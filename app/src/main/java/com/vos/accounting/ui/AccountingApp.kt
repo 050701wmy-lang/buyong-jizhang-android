@@ -87,6 +87,13 @@ fun AccountingApp() {
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val backStack = rememberNavBackStack(MainRoute)
+    val navigateTo = remember(backStack) {
+        { route: AccountingRoute ->
+            if (backStack.lastOrNull() != route) {
+                backStack.add(route)
+            }
+        }
+    }
 
     // 统一管理页面转场：新页从右侧进入、来源页左退压暗、预测返回跟随手势。
     val transitionEffects = remember {
@@ -123,11 +130,11 @@ fun AccountingApp() {
                         MainShell(
                             uiState = uiState,
                             backdrop = backdrop,
-                            onOpenManualEntry = { backStack.add(ManualEntryRoute()) },
-                            onOpenTransactionEdit = { backStack.add(TransactionEditRoute(it)) },
-                            onOpenAccount = { backStack.add(AccountDetailRoute(it)) },
-                            onAddAccount = { backStack.add(AccountEditorRoute()) },
-                            onOpenSettings = { backStack.add(SettingsRoute) },
+                            onOpenManualEntry = { navigateTo(ManualEntryRoute()) },
+                            onOpenTransactionEdit = { navigateTo(TransactionEditRoute(it)) },
+                            onOpenAccount = { navigateTo(AccountDetailRoute(it)) },
+                            onAddAccount = { navigateTo(AccountEditorRoute()) },
+                            onOpenSettings = { navigateTo(SettingsRoute) },
                         )
                     }
                     entry<ManualEntryRoute> { route ->
@@ -165,9 +172,9 @@ fun AccountingApp() {
                                 transactions = uiState.transactions,
                                 backdrop = backdrop,
                                 onBack = { backStack.removeAt(backStack.lastIndex) },
-                                onEditAccount = { backStack.add(AccountEditorRoute(it)) },
-                                onEditTransaction = { backStack.add(TransactionEditRoute(it)) },
-                                onAddTransaction = { backStack.add(ManualEntryRoute(account.id)) },
+                                onEditAccount = { navigateTo(AccountEditorRoute(it)) },
+                                onEditTransaction = { navigateTo(TransactionEditRoute(it)) },
+                                onAddTransaction = { navigateTo(ManualEntryRoute(account.id)) },
                             )
                         }
                     }
@@ -202,12 +209,8 @@ fun AccountingApp() {
                             uiState = uiState,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
-                            onThemeModeChange = {
-                                viewModel.updateSettings(it, uiState.followSystemColor)
-                            },
-                            onFollowSystemColorChange = {
-                                viewModel.updateSettings(uiState.themeMode, it)
-                            },
+                            onThemeModeChange = viewModel::updateThemeMode,
+                            onFollowSystemColorChange = viewModel::updateFollowSystemColor,
                         )
                     }
                     entry<AiEntryRoute> {

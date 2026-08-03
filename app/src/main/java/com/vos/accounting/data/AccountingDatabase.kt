@@ -216,6 +216,18 @@ interface AccountingDao {
     suspend fun upsertSettings(settings: AppSettingsEntity)
 
     /**
+     * 只更新应用外观的明暗模式。
+     */
+    @Query("UPDATE app_settings SET theme_mode = :themeMode WHERE id = 1")
+    suspend fun updateThemeMode(themeMode: String)
+
+    /**
+     * 只更新应用是否跟随系统配色。
+     */
+    @Query("UPDATE app_settings SET follow_system_color = :followSystemColor WHERE id = 1")
+    suspend fun updateFollowSystemColor(followSystemColor: Boolean)
+
+    /**
      * 返回设置行数量。
      */
     @Query("SELECT COUNT(*) FROM app_settings")
