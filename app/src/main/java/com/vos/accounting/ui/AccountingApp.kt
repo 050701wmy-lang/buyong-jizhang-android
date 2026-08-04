@@ -18,6 +18,7 @@ import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.data.LedgerEntity
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -67,7 +68,20 @@ data class AccountEditorRoute(
     val iconKey: String? = null,
     val typeKey: String? = null,
     val currencyKey: String? = null,
+    val ledgerIds: List<Long>? = null,
 ) : AccountingRoute
+
+/** 表示账本选择二级页面。 */
+@Serializable
+data object LedgerRoute : AccountingRoute
+
+/** 表示新增或编辑账本的二级页面。 */
+@Serializable
+data class LedgerEditorRoute(val ledgerId: Long = 0) : AccountingRoute
+
+/** 表示账户适用账本多选页面。 */
+@Serializable
+data class AccountLedgerPickerRoute(val selectedIds: List<Long>) : AccountingRoute
 
 /**
  * 表示账户币种选择二级页面。
@@ -164,6 +178,8 @@ fun AccountingApp() {
                             onOpenAccount = { navigateTo(AccountDetailRoute(it)) },
                             onAddAccount = { navigateTo(AccountEditorRoute()) },
                             onOpenSettings = { navigateTo(SettingsRoute) },
+                            onOpenLedgers = { navigateTo(LedgerRoute) },
+                            onSelectLedger = { ledgerId -> viewModel.selectLedger(ledgerId) {} },
                         )
                     }
                     entry<ManualEntryRoute> { route ->
@@ -233,6 +249,10 @@ fun AccountingApp() {
                             selectedCurrencyKey = route.currencyKey ?: account?.currencyKey ?: "cny",
                             selectedIconKey = route.iconKey ?: account?.iconKey
                                 ?: defaultAccountIconKey(AccountType.CASH),
+                            ledgers = uiState.ledgers,
+                            selectedLedgerIds = route.ledgerIds?.toSet()
+                                ?: uiState.accountLedgerCrossRefs.filter { it.accountId == account?.id }.map { it.ledgerId }.toSet()
+                                    .ifEmpty { setOf(uiState.currentLedgerId) },
                             currentBalanceMinor = currentBalanceMinor,
                             writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
@@ -242,6 +262,7 @@ fun AccountingApp() {
                             onOpenTypePicker = { navigateTo(AccountTypeRoute(it)) },
                             onOpenCurrencyPicker = { navigateTo(CurrencyRoute(it)) },
                             onOpenIconPicker = { navigateTo(AccountIconRoute(it)) },
+                            onOpenLedgerPicker = { navigateTo(AccountLedgerPickerRoute(it.toList())) },
                         )
                     }
                     entry<AccountTypeRoute> { route ->
@@ -290,6 +311,47 @@ fun AccountingApp() {
                                 val editorIndex = backStack.lastIndex - 1
                                 val editor = backStack[editorIndex] as AccountEditorRoute
                                 backStack[editorIndex] = editor.copy(iconKey = iconKey)
+                                backStack.removeAt(backStack.lastIndex)
+                            },
+                        )
+                    }
+                    entry<LedgerRoute> {
+                        LedgerScreen(
+                            ledgers = uiState.ledgers,
+                            currentLedgerId = uiState.currentLedgerId,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onAdd = { navigateTo(LedgerEditorRoute()) },
+                            onEdit = { navigateTo(LedgerEditorRoute(it)) },
+                            onSelect = { id -> viewModel.selectLedger(id) { backStack.removeAt(backStack.lastIndex) } },
+                        )
+                    }
+                    entry<LedgerEditorRoute> { route ->
+                        val record = uiState.ledgers.firstOrNull { it.id == route.ledgerId }
+                        val ledger = record?.let {
+                            LedgerEntity(it.id, it.name, it.coverKey, it.useLightText, it.baseCurrencyKey, it.isHidden, it.sortOrder)
+                        }
+                        LedgerEditorScreen(
+                            ledger = ledger,
+                            currencies = uiState.currencies,
+                            writeInProgress = uiState.writeInProgress,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onAdd = viewModel::addLedger,
+                            onUpdate = viewModel::updateLedger,
+                            onDelete = viewModel::deleteLedger,
+                        )
+                    }
+                    entry<AccountLedgerPickerRoute> { route ->
+                        AccountLedgerPickerScreen(
+                            ledgers = uiState.ledgers,
+                            selectedIds = route.selectedIds.toSet(),
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onConfirm = { ids ->
+                                val editorIndex = backStack.lastIndex - 1
+                                val editor = backStack[editorIndex] as AccountEditorRoute
+                                backStack[editorIndex] = editor.copy(ledgerIds = ids.toList())
                                 backStack.removeAt(backStack.lastIndex)
                             },
                         )

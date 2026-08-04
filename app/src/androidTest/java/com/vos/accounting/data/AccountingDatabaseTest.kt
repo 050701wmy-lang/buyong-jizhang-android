@@ -63,6 +63,7 @@ class AccountingDatabaseTest {
                 sortOrder = 0,
                 isDefault = true,
             ),
+            setOf(1),
         )
 
         assertEquals(listOf(bankId), dao.observeAccounts().first().filter(AccountEntity::isDefault).map(AccountEntity::id))

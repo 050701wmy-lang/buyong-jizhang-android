@@ -9,6 +9,9 @@ import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
+import com.vos.accounting.data.LedgerEntity
+import com.vos.accounting.data.LedgerRecord
+import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.CategoryTotal
 import com.vos.accounting.model.OverviewTotals
@@ -19,6 +22,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -36,6 +40,9 @@ data class AccountingUiState(
     val accounts: List<AccountEntity> = emptyList(),
     val accountTypes: List<AccountTypeEntity> = emptyList(),
     val currencies: List<CurrencyEntity> = emptyList(),
+    val ledgers: List<LedgerRecord> = emptyList(),
+    val accountLedgerCrossRefs: List<AccountLedgerCrossRef> = emptyList(),
+    val currentLedgerId: Long = 1,
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionRecord> = emptyList(),
     val totals: OverviewTotals = OverviewTotals(0, 0),
@@ -49,6 +56,15 @@ data class AccountingUiState(
     val predictiveBackAnimationEnabled: Boolean = false,
 )
 
+/** 汇集账户、类型、币种及账本关联的响应式状态。 */
+private data class LedgerAccountState(
+    val accounts: List<AccountEntity>,
+    val accountTypes: List<AccountTypeEntity>,
+    val currencies: List<CurrencyEntity>,
+    val ledgers: List<LedgerRecord>,
+    val refs: List<AccountLedgerCrossRef>,
+)
+
 /**
  * 管理账本界面状态、AI 草稿和统一保存动作。
  */
@@ -59,13 +75,18 @@ class AccountingViewModel(
     private val aiDraft = MutableStateFlow<TransactionDraft?>(null)
     private val aiError = MutableStateFlow<String?>(null)
     private val writeState = MutableStateFlow(AccountingWriteState())
+    private var pendingLedgerId: Long? = null
+    private var pendingLedgerSelection: (() -> Unit)? = null
+    private var ledgerSelectionJob: Job? = null
 
     private val accountState = combine(
         repository.accounts,
         repository.accountTypes,
         repository.currencies,
-    ) { accounts, accountTypes, currencies ->
-        Triple(accounts, accountTypes, currencies)
+        repository.ledgers,
+        repository.accountLedgerCrossRefs,
+    ) { accounts, accountTypes, currencies, ledgers, refs ->
+        LedgerAccountState(accounts, accountTypes, currencies, ledgers, refs)
     }
 
     private val ledgerState = combine(
@@ -76,9 +97,11 @@ class AccountingViewModel(
         repository.expenseCategoryTotals,
     ) { accountState, categories, transactions, totals, categoryTotals ->
         AccountingUiState(
-            accounts = accountState.first,
-            accountTypes = accountState.second,
-            currencies = accountState.third,
+            accounts = accountState.accounts,
+            accountTypes = accountState.accountTypes,
+            currencies = accountState.currencies,
+            ledgers = accountState.ledgers,
+            accountLedgerCrossRefs = accountState.refs,
             categories = categories,
             transactions = transactions,
             totals = totals,
@@ -103,6 +126,7 @@ class AccountingViewModel(
             } ?: AccountingThemeMode.SYSTEM,
             followSystemColor = settings?.followSystemColor ?: true,
             predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
+            currentLedgerId = settings?.currentLedgerId ?: 1,
         )
     }.stateIn(
         scope = viewModelScope,
@@ -128,7 +152,7 @@ class AccountingViewModel(
                 accounts = state.accounts.filterNot(AccountEntity::isArchived),
                 categories = state.categories.filterNot(CategoryEntity::isArchived),
                 occurredAt = System.currentTimeMillis(),
-            )
+            ).copy(ledgerId = state.currentLedgerId)
             aiError.value = null
         } catch (error: IllegalArgumentException) {
             aiDraft.value = null
@@ -226,11 +250,72 @@ class AccountingViewModel(
      */
     fun saveAccount(
         account: AccountEntity,
+        ledgerIds: Set<Long>,
         onSaved: () -> Unit,
     ) {
         launchWrite(
-            action = { repository.saveAccount(account) },
+            action = { repository.saveAccount(account, ledgerIds) },
             onSuccess = { onSaved() },
+        )
+    }
+
+    /** 新增账本并在成功后返回标识。 */
+    fun addLedger(
+        name: String,
+        coverKey: String,
+        useLightText: Boolean,
+        baseCurrencyKey: String,
+        isHidden: Boolean,
+        onAdded: (Long) -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.addLedger(name, coverKey, useLightText, baseCurrencyKey, isHidden) },
+            onSuccess = onAdded,
+        )
+    }
+
+    /** 更新账本信息。 */
+    fun updateLedger(ledger: LedgerEntity, onUpdated: () -> Unit) {
+        launchWrite(
+            action = { repository.updateLedger(ledger) },
+            onSuccess = { onUpdated() },
+        )
+    }
+
+    /** 切换当前账本。 */
+    fun selectLedger(ledgerId: Long, onSelected: () -> Unit) {
+        pendingLedgerId = ledgerId
+        pendingLedgerSelection = onSelected
+        if (ledgerSelectionJob?.isActive == true) return
+        ledgerSelectionJob = viewModelScope.launch {
+            writeState.value = AccountingWriteState(inProgress = true)
+            try {
+                while (pendingLedgerId != null) {
+                    val targetLedgerId = pendingLedgerId ?: break
+                    val selected = pendingLedgerSelection ?: {}
+                    pendingLedgerId = null
+                    pendingLedgerSelection = null
+                    repository.selectLedger(targetLedgerId)
+                    if (pendingLedgerId == null) selected()
+                }
+                writeState.value = AccountingWriteState()
+            } catch (error: CancellationException) {
+                writeState.value = AccountingWriteState()
+                throw error
+            } catch (error: Exception) {
+                val message = error.message?.takeIf(String::isNotBlank) ?: "操作失败，请重试"
+                writeState.value = AccountingWriteState(error = message)
+            } finally {
+                ledgerSelectionJob = null
+            }
+        }
+    }
+
+    /** 删除没有明细的账本。 */
+    fun deleteLedger(ledgerId: Long, onDeleted: () -> Unit) {
+        launchWrite(
+            action = { repository.deleteLedger(ledgerId) },
+            onSuccess = { onDeleted() },
         )
     }
 

@@ -102,6 +102,8 @@ fun MainShell(
     onOpenAccount: (Long) -> Unit,
     onAddAccount: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenLedgers: () -> Unit,
+    onSelectLedger: (Long) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(MainTab.HOME) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -134,6 +136,8 @@ fun MainShell(
                     onAddAccount = onAddAccount,
                     onOpenAccount = onOpenAccount,
                     onOpenSettings = onOpenSettings,
+                    onOpenLedgers = onOpenLedgers,
+                    onSelectLedger = onSelectLedger,
                 )
             }
         } else {
@@ -149,6 +153,8 @@ fun MainShell(
                 onAddAccount = onAddAccount,
                 onOpenAccount = onOpenAccount,
                 onOpenSettings = onOpenSettings,
+                onOpenLedgers = onOpenLedgers,
+                onSelectLedger = onSelectLedger,
             )
         }
     }
@@ -170,6 +176,8 @@ private fun MainScaffold(
     onAddAccount: () -> Unit,
     onOpenAccount: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenLedgers: () -> Unit,
+    onSelectLedger: (Long) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     var mainViewportWidth by remember { mutableIntStateOf(0) }
@@ -204,6 +212,8 @@ private fun MainScaffold(
                                 MainAddAccountAction(onClick = onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
+                            MainLedgerAction(onClick = onOpenLedgers)
+                            Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             MainSettingsAction(onClick = onOpenSettings)
                         },
                     )
@@ -218,6 +228,8 @@ private fun MainScaffold(
                                 MainAddAccountAction(onClick = onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
+                            MainLedgerAction(onClick = onOpenLedgers)
+                            Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             MainSettingsAction(onClick = onOpenSettings)
                         },
                     )
@@ -286,6 +298,7 @@ private fun MainScaffold(
                         innerPadding = innerPadding,
                         onOpenAccount = onOpenAccount,
                         onOpenTransactionEdit = onOpenTransactionEdit,
+                        onSelectLedger = onSelectLedger,
                     )
                 }
             } else {
@@ -296,6 +309,7 @@ private fun MainScaffold(
                     innerPadding = innerPadding,
                     onOpenAccount = onOpenAccount,
                     onOpenTransactionEdit = onOpenTransactionEdit,
+                    onSelectLedger = onSelectLedger,
                 )
             }
         }
@@ -313,6 +327,7 @@ private fun MainTabPager(
     innerPadding: PaddingValues,
     onOpenAccount: (Long) -> Unit,
     onOpenTransactionEdit: (Long) -> Unit,
+    onSelectLedger: (Long) -> Unit,
 ) {
     HorizontalPager(
         state = pagerState,
@@ -327,6 +342,7 @@ private fun MainTabPager(
                 innerPadding = innerPadding,
                 onOpenAccount = onOpenAccount,
                 onOpenTransactionEdit = onOpenTransactionEdit,
+                onSelectLedger = onSelectLedger,
             )
         }
     }
@@ -342,12 +358,14 @@ private fun MainTabContent(
     innerPadding: PaddingValues,
     onOpenAccount: (Long) -> Unit,
     onOpenTransactionEdit: (Long) -> Unit,
+    onSelectLedger: (Long) -> Unit,
 ) {
     when (tab) {
         MainTab.HOME -> HomeScreen(
             uiState = uiState,
             innerPadding = innerPadding,
             onOpenAccount = onOpenAccount,
+            onSelectLedger = onSelectLedger,
         )
 
         MainTab.DETAILS -> DetailsScreen(
@@ -395,6 +413,23 @@ private fun MainAddAccountAction(onClick: () -> Unit) {
         Icon(
             imageVector = MiuixIcons.Add,
             contentDescription = "新增账户",
+            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
+        )
+    }
+}
+
+/** 显示三个主分页共用的账本选择入口。 */
+@Composable
+private fun MainLedgerAction(onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        backgroundColor = Color.Transparent,
+        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
+        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
+    ) {
+        Icon(
+            imageVector = MiuixIcons.GridView,
+            contentDescription = "选择账本",
             modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
         )
     }

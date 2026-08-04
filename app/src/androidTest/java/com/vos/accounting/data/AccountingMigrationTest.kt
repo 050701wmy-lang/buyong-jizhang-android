@@ -233,11 +233,42 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v8 数据升级后自动建立默认账本并关联已有账户。 */
+    @Test
+    fun migrateVersionEightToVersionNine() {
+        helper.createDatabase(DATABASE_NAME, 8).apply {
+            execSQL(
+                "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order, icon_key, is_default, is_archived, type_key, currency_key) " +
+                    "VALUES (1, '现金', 'CASH', 5000, 0, 'cash', 1, 0, 'cash', 'cny')",
+            )
+            execSQL(
+                "INSERT INTO app_settings (id, theme_mode, follow_system_color, predictive_back_animation_enabled) VALUES (1, 'SYSTEM', 1, 0)",
+            )
+            close()
+        }
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            9,
+            true,
+            AccountingDatabase.MIGRATION_8_9,
+        )
+        migrated.query("SELECT name, base_currency_key FROM ledgers WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals("日常账本", it.getString(0))
+            assertEquals("cny", it.getString(1))
+        }
+        migrated.query("SELECT ledger_id FROM account_ledger_cross_ref WHERE account_id = 1").use {
+            it.moveToFirst()
+            assertEquals(1, it.getLong(0))
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */
     @Test
-    fun migrateVersionOneToVersionEight() {
+    fun migrateVersionOneToVersionNine() {
         helper.createDatabase(DATABASE_NAME, 1).apply {
             execSQL(
                 "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order) " +
@@ -252,7 +283,7 @@ class AccountingMigrationTest {
 
         val migrated = helper.runMigrationsAndValidate(
             DATABASE_NAME,
-            8,
+            9,
             true,
             AccountingDatabase.MIGRATION_1_2,
             AccountingDatabase.MIGRATION_2_3,
@@ -261,6 +292,7 @@ class AccountingMigrationTest {
             AccountingDatabase.MIGRATION_5_6,
             AccountingDatabase.MIGRATION_6_7,
             AccountingDatabase.MIGRATION_7_8,
+            AccountingDatabase.MIGRATION_8_9,
         )
         migrated.query("SELECT is_default, is_archived FROM accounts WHERE id = 1").use {
             it.moveToFirst()
@@ -296,6 +328,10 @@ class AccountingMigrationTest {
         migrated.query("SELECT predictive_back_animation_enabled FROM app_settings WHERE id = 1").use {
             it.moveToFirst()
             assertEquals(0, it.getInt(0))
+        }
+        migrated.query("SELECT current_ledger_id FROM app_settings WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals(1, it.getLong(0))
         }
         migrated.close()
     }

@@ -49,6 +49,62 @@ data class AccountEntity(
     val isArchived: Boolean = false,
 )
 
+/** 表示可独立筛选账目并提供主题封面的账本。 */
+@Entity(
+    tableName = "ledgers",
+    indices = [Index(value = ["name"], unique = true)],
+)
+data class LedgerEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    @ColumnInfo(name = "cover_key")
+    val coverKey: String,
+    @ColumnInfo(name = "use_light_text")
+    val useLightText: Boolean,
+    @ColumnInfo(name = "base_currency_key")
+    val baseCurrencyKey: String,
+    @ColumnInfo(name = "is_hidden")
+    val isHidden: Boolean = false,
+    @ColumnInfo(name = "sort_order")
+    val sortOrder: Int = 0,
+)
+
+/** 表示一个账户可在哪些账本中使用。 */
+@Entity(
+    tableName = "account_ledger_cross_ref",
+    primaryKeys = ["account_id", "ledger_id"],
+    foreignKeys = [
+        ForeignKey(entity = AccountEntity::class, parentColumns = ["id"], childColumns = ["account_id"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = LedgerEntity::class, parentColumns = ["id"], childColumns = ["ledger_id"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("ledger_id")],
+)
+data class AccountLedgerCrossRef(
+    @ColumnInfo(name = "account_id")
+    val accountId: Long,
+    @ColumnInfo(name = "ledger_id")
+    val ledgerId: Long = 1,
+)
+
+/** 表示账本选择页需要的账本信息与账目数量。 */
+data class LedgerRecord(
+    val id: Long,
+    val name: String,
+    @ColumnInfo(name = "cover_key")
+    val coverKey: String,
+    @ColumnInfo(name = "use_light_text")
+    val useLightText: Boolean,
+    @ColumnInfo(name = "base_currency_key")
+    val baseCurrencyKey: String,
+    @ColumnInfo(name = "is_hidden")
+    val isHidden: Boolean,
+    @ColumnInfo(name = "sort_order")
+    val sortOrder: Int,
+    @ColumnInfo(name = "transaction_count")
+    val transactionCount: Int,
+)
+
 /**
  * 表示账户可选的预置或自定义币种及其兑人民币汇率。
  */
@@ -159,6 +215,8 @@ data class AppSettingsEntity(
     val followSystemColor: Boolean = true,
     @ColumnInfo(name = "predictive_back_animation_enabled", defaultValue = "0")
     val predictiveBackAnimationEnabled: Boolean = false,
+    @ColumnInfo(name = "current_ledger_id", defaultValue = "1")
+    val currentLedgerId: Long = 1,
 )
 
 /**
@@ -201,6 +259,8 @@ data class TransactionEntity(
     @ColumnInfo(name = "occurred_at")
     val occurredAt: Long,
     val source: TransactionSource,
+    @ColumnInfo(name = "ledger_id")
+    val ledgerId: Long = 1,
 )
 
 /**
@@ -232,6 +292,8 @@ data class TransactionRecord(
     val currencySymbol: String,
     @ColumnInfo(name = "currency_rate_to_cny_scaled")
     val currencyRateToCnyScaled: Long,
+    @ColumnInfo(name = "ledger_id")
+    val ledgerId: Long,
 )
 
 /**
@@ -242,8 +304,16 @@ interface AccountingDao {
     /**
      * 持续观察全部账户。
      */
-    @Query("SELECT * FROM accounts ORDER BY sort_order, id")
+    @Query("SELECT accounts.* FROM accounts INNER JOIN account_ledger_cross_ref ref ON ref.account_id = accounts.id INNER JOIN app_settings ON app_settings.id = 1 WHERE ref.ledger_id = app_settings.current_ledger_id ORDER BY accounts.sort_order, accounts.id")
     fun observeAccounts(): Flow<List<AccountEntity>>
+
+    /** 持续观察全部账本及其账目数量。 */
+    @Query("SELECT ledgers.*, COUNT(transactions.id) AS transaction_count FROM ledgers LEFT JOIN transactions ON transactions.ledger_id = ledgers.id GROUP BY ledgers.id ORDER BY ledgers.sort_order, ledgers.id")
+    fun observeLedgers(): Flow<List<LedgerRecord>>
+
+    /** 持续观察全部账户与账本关联。 */
+    @Query("SELECT * FROM account_ledger_cross_ref")
+    fun observeAccountLedgerCrossRefs(): Flow<List<AccountLedgerCrossRef>>
 
     /**
      * 持续观察全部账户类型。
@@ -271,11 +341,14 @@ interface AccountingDao {
         SELECT transactions.*, accounts.name AS account_name, categories.name AS category_name,
             categories.icon_key AS category_icon_key, currencies.`key` AS currency_key,
             currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transactions.ledger_id AS ledger_id
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         INNER JOIN categories ON categories.id = transactions.category_id
         INNER JOIN currencies ON currencies.`key` = accounts.currency_key
+        INNER JOIN app_settings ON app_settings.id = 1
+        WHERE transactions.ledger_id = app_settings.current_ledger_id
         ORDER BY occurred_at DESC, transactions.id DESC
         """,
     )
@@ -288,14 +361,18 @@ interface AccountingDao {
         """
         SELECT
             COALESCE(SUM(CASE WHEN transactions.type = 'INCOME' THEN
-                (transactions.amount_minor * currencies.rate_to_cny_scaled + 50000000) / 100000000
+                (transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled
                 ELSE 0 END), 0) AS income_minor,
             COALESCE(SUM(CASE WHEN transactions.type = 'EXPENSE' THEN
-                (transactions.amount_minor * currencies.rate_to_cny_scaled + 50000000) / 100000000
+                (transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled
                 ELSE 0 END), 0) AS expense_minor
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         INNER JOIN currencies ON currencies.`key` = accounts.currency_key
+        INNER JOIN app_settings ON app_settings.id = 1
+        INNER JOIN ledgers ON ledgers.id = app_settings.current_ledger_id
+        INNER JOIN currencies AS base_currency ON base_currency.`key` = ledgers.base_currency_key
+        WHERE transactions.ledger_id = app_settings.current_ledger_id
         """,
     )
     fun observeOverviewTotals(): Flow<OverviewTotals>
@@ -306,12 +383,15 @@ interface AccountingDao {
     @Query(
         """
         SELECT categories.name AS category_name,
-            SUM((transactions.amount_minor * currencies.rate_to_cny_scaled + 50000000) / 100000000) AS amount_minor
+            SUM((transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled) AS amount_minor
         FROM transactions
         INNER JOIN categories ON categories.id = transactions.category_id
         INNER JOIN accounts ON accounts.id = transactions.account_id
         INNER JOIN currencies ON currencies.`key` = accounts.currency_key
-        WHERE transactions.type = 'EXPENSE'
+        INNER JOIN app_settings ON app_settings.id = 1
+        INNER JOIN ledgers ON ledgers.id = app_settings.current_ledger_id
+        INNER JOIN currencies AS base_currency ON base_currency.`key` = ledgers.base_currency_key
+        WHERE transactions.type = 'EXPENSE' AND transactions.ledger_id = app_settings.current_ledger_id
         GROUP BY categories.id
         ORDER BY amount_minor DESC
         """,
@@ -348,6 +428,10 @@ interface AccountingDao {
     @Query("UPDATE app_settings SET predictive_back_animation_enabled = :enabled WHERE id = 1")
     suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean)
 
+    /** 切换当前账本。 */
+    @Query("UPDATE app_settings SET current_ledger_id = :ledgerId WHERE id = 1")
+    suspend fun updateCurrentLedger(ledgerId: Long)
+
     /**
      * 返回设置行数量。
      */
@@ -359,6 +443,42 @@ interface AccountingDao {
      */
     @Query("SELECT * FROM accounts WHERE id = :accountId")
     suspend fun findAccount(accountId: Long): AccountEntity?
+
+    /** 返回指定账本。 */
+    @Query("SELECT * FROM ledgers WHERE id = :ledgerId")
+    suspend fun findLedger(ledgerId: Long): LedgerEntity?
+
+    /** 返回指定账户适用的账本标识。 */
+    @Query("SELECT ledger_id FROM account_ledger_cross_ref WHERE account_id = :accountId")
+    suspend fun findAccountLedgerIds(accountId: Long): List<Long>
+
+    /** 新增账本。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertLedger(ledger: LedgerEntity): Long
+
+    /** 更新账本。 */
+    @Update
+    suspend fun updateLedger(ledger: LedgerEntity): Int
+
+    /** 删除指定账本。 */
+    @Query("DELETE FROM ledgers WHERE id = :ledgerId")
+    suspend fun deleteLedger(ledgerId: Long): Int
+
+    /** 插入账户与账本关联。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAccountLedgerCrossRefs(refs: List<AccountLedgerCrossRef>)
+
+    /** 清除指定账户的账本关联。 */
+    @Query("DELETE FROM account_ledger_cross_ref WHERE account_id = :accountId")
+    suspend fun deleteAccountLedgerCrossRefs(accountId: Long)
+
+    /** 返回账本当前最大排序值。 */
+    @Query("SELECT COALESCE(MAX(sort_order), -1) FROM ledgers")
+    suspend fun maxLedgerSortOrder(): Int
+
+    /** 返回账本数量。 */
+    @Query("SELECT COUNT(*) FROM ledgers")
+    suspend fun countLedgers(): Int
 
     /**
      * 返回指定账户类型，找不到时返回空。
@@ -519,6 +639,15 @@ interface AccountingDao {
         return accountId
     }
 
+    /** 保存账户并整体替换其适用账本。 */
+    @Transaction
+    suspend fun saveAccountWithLedgers(account: AccountEntity, ledgerIds: Set<Long>): Long {
+        val accountId = saveAccount(account)
+        deleteAccountLedgerCrossRefs(accountId)
+        insertAccountLedgerCrossRefs(ledgerIds.map { AccountLedgerCrossRef(accountId, it) })
+        return accountId
+    }
+
     /**
      * 标记指定账户为停用并清除其默认状态。
      */
@@ -621,6 +750,17 @@ interface AccountingDao {
      */
     @Transaction
     suspend fun seedDefaults() {
+        if (countLedgers() == 0) {
+            insertLedger(
+                LedgerEntity(
+                    id = 1,
+                    name = "日常账本",
+                    coverKey = "cover_ocean",
+                    useLightText = true,
+                    baseCurrencyKey = "cny",
+                ),
+            )
+        }
         if (countAccountTypes() == 0) {
             insertAccountTypes(defaultAccountTypes())
         }
@@ -628,7 +768,7 @@ interface AccountingDao {
             insertCurrencies(defaultCurrencies())
         }
         if (countAccounts() == 0) {
-            insertAccount(
+            val accountId = insertAccount(
                 AccountEntity(
                     name = "现金",
                     type = AccountType.CASH,
@@ -639,6 +779,7 @@ interface AccountingDao {
                     isDefault = true,
                 ),
             )
+            insertAccountLedgerCrossRefs(listOf(AccountLedgerCrossRef(accountId, 1)))
         }
         ensureDefaultAccount()
         if (countSettings() == 0) {
@@ -667,13 +808,15 @@ interface AccountingDao {
 @Database(
     entities = [
         AccountEntity::class,
+        LedgerEntity::class,
+        AccountLedgerCrossRef::class,
         AccountTypeEntity::class,
         CurrencyEntity::class,
         CategoryEntity::class,
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -698,6 +841,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_5_6,
             MIGRATION_6_7,
             MIGRATION_7_8,
+            MIGRATION_8_9,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -877,6 +1021,54 @@ abstract class AccountingDatabase : RoomDatabase() {
             override fun migrate(connection: SQLiteConnection) {
                 connection.executeMigrationSql(
                     "ALTER TABLE app_settings ADD COLUMN predictive_back_animation_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            /** 建立账本、账户多账本关联与账目归属，并把已有数据迁入默认账本。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `ledgers` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `cover_key` TEXT NOT NULL,
+                        `use_light_text` INTEGER NOT NULL,
+                        `base_currency_key` TEXT NOT NULL,
+                        `is_hidden` INTEGER NOT NULL,
+                        `sort_order` INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_ledgers_name` ON `ledgers` (`name`)",
+                )
+                connection.executeMigrationSql(
+                    "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) VALUES (1, '日常账本', 'cover_ocean', 1, 'cny', 0, 0)",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `account_ledger_cross_ref` (
+                        `account_id` INTEGER NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        PRIMARY KEY(`account_id`, `ledger_id`),
+                        FOREIGN KEY(`account_id`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(`ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_account_ledger_cross_ref_ledger_id` ON `account_ledger_cross_ref` (`ledger_id`)",
+                )
+                connection.executeMigrationSql(
+                    "INSERT INTO account_ledger_cross_ref (account_id, ledger_id) SELECT id, 1 FROM accounts",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE transactions ADD COLUMN ledger_id INTEGER NOT NULL DEFAULT 1",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN current_ledger_id INTEGER NOT NULL DEFAULT 1",
                 )
             }
         }

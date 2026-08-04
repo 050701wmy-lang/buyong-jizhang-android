@@ -20,6 +20,8 @@ class AccountingRepository(
     private val currencyRateService: CurrencyRateService = CurrencyRateService(),
 ) {
     val accounts = dao.observeAccounts()
+    val ledgers = dao.observeLedgers()
+    val accountLedgerCrossRefs = dao.observeAccountLedgerCrossRefs()
     val accountTypes = dao.observeAccountTypes()
     val currencies = dao.observeCurrencies()
     val categories = dao.observeCategories()
@@ -87,6 +89,7 @@ class AccountingRepository(
                 note = draft.note.trim(),
                 occurredAt = draft.occurredAt,
                 source = draft.source,
+                ledgerId = draft.ledgerId,
             ),
         )
     }
@@ -112,6 +115,7 @@ class AccountingRepository(
                 note = draft.note.trim(),
                 occurredAt = draft.occurredAt,
                 source = draft.source,
+                ledgerId = original.ledgerId,
             ),
         )
         if (updated == 0) throw AccountingWriteException("账目不存在或已被删除")
@@ -129,7 +133,7 @@ class AccountingRepository(
     /**
      * 新增或更新一个账户。
      */
-    suspend fun saveAccount(account: AccountEntity): Long {
+    suspend fun saveAccount(account: AccountEntity, ledgerIds: Set<Long>): Long {
         val accountType = dao.findAccountType(account.typeKey)
             ?: throw AccountingWriteException("请选择账户类型")
         if (dao.findCurrency(account.currencyKey) == null) {
@@ -143,7 +147,59 @@ class AccountingRepository(
         )
         if (normalized.name.isEmpty()) throw AccountingWriteException("账户名称不能为空")
         if (normalized.iconKey.isBlank()) throw AccountingWriteException("请选择账户图标")
-        return dao.saveAccount(normalized)
+        if (ledgerIds.isEmpty()) throw AccountingWriteException("请至少选择一个适用账本")
+        return dao.saveAccountWithLedgers(normalized, ledgerIds)
+    }
+
+    /** 新增账本并返回其标识。 */
+    suspend fun addLedger(
+        name: String,
+        coverKey: String,
+        useLightText: Boolean,
+        baseCurrencyKey: String,
+        isHidden: Boolean,
+    ): Long {
+        val normalizedName = name.trim()
+        if (normalizedName.isEmpty()) throw AccountingWriteException("账本名称不能为空")
+        if (dao.findCurrency(baseCurrencyKey) == null) throw AccountingWriteException("请选择本位币")
+        val id = dao.insertLedger(
+            LedgerEntity(
+                name = normalizedName,
+                coverKey = coverKey,
+                useLightText = useLightText,
+                baseCurrencyKey = baseCurrencyKey,
+                isHidden = isHidden,
+                sortOrder = dao.maxLedgerSortOrder() + 1,
+            ),
+        )
+        if (id == -1L) throw AccountingWriteException("账本名称不能重复")
+        return id
+    }
+
+    /** 更新账本名称、封面、本位币和隐藏状态。 */
+    suspend fun updateLedger(ledger: LedgerEntity) {
+        if (ledger.name.trim().isEmpty()) throw AccountingWriteException("账本名称不能为空")
+        if (dao.findCurrency(ledger.baseCurrencyKey) == null) throw AccountingWriteException("请选择本位币")
+        if (dao.updateLedger(ledger.copy(name = ledger.name.trim())) == 0) {
+            throw AccountingWriteException("账本不存在")
+        }
+    }
+
+    /** 切换三个主分页共同使用的当前账本。 */
+    suspend fun selectLedger(ledgerId: Long) {
+        val ledger = dao.findLedger(ledgerId) ?: throw AccountingWriteException("账本不存在")
+        if (ledger.isHidden) throw AccountingWriteException("请先取消隐藏该账本")
+        dao.updateCurrentLedger(ledgerId)
+    }
+
+    /** 删除空的非当前账本。 */
+    suspend fun deleteLedger(ledgerId: Long) {
+        val ledger = dao.findLedger(ledgerId) ?: throw AccountingWriteException("账本不存在")
+        if (ledger.id == 1L) throw AccountingWriteException("默认账本不能删除")
+        if (dao.observeLedgers().first().firstOrNull { it.id == ledgerId }?.transactionCount != 0) {
+            throw AccountingWriteException("账本中已有明细，不能删除")
+        }
+        if (dao.deleteLedger(ledgerId) == 0) throw AccountingWriteException("账本删除失败")
     }
 
     /**

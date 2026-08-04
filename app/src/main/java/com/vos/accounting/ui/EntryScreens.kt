@@ -58,6 +58,7 @@ import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
+import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionDraft
@@ -228,6 +229,7 @@ fun ManualEntryScreen(
                         note = note.text,
                         occurredAt = occurredAt,
                         source = transaction?.source ?: TransactionSource.MANUAL,
+                        ledgerId = transaction?.ledgerId ?: uiState.currentLedgerId,
                     )
                     if (transaction == null) {
                         onSave(draft, onBack)
@@ -1317,6 +1319,8 @@ fun AccountEditorScreen(
     account: AccountEntity?,
     accountTypes: List<AccountTypeEntity>,
     currencies: List<CurrencyEntity>,
+    ledgers: List<LedgerRecord>,
+    selectedLedgerIds: Set<Long>,
     selectedTypeKey: String,
     selectedCurrencyKey: String,
     selectedIconKey: String,
@@ -1324,11 +1328,12 @@ fun AccountEditorScreen(
     writeInProgress: Boolean,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
-    onSave: (AccountEntity, () -> Unit) -> Unit,
+    onSave: (AccountEntity, Set<Long>, () -> Unit) -> Unit,
     onArchive: (Long, () -> Unit) -> Unit,
     onOpenTypePicker: (String) -> Unit,
     onOpenCurrencyPicker: (String) -> Unit,
     onOpenIconPicker: (String) -> Unit,
+    onOpenLedgerPicker: (Set<Long>) -> Unit,
 ) {
     var name by rememberSaveable(account?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(account?.name.orEmpty()))
@@ -1365,7 +1370,7 @@ fun AccountEditorScreen(
     } else {
         currentBalanceMinor - account.openingBalanceMinor
     }
-    val canSave = name.text.isNotBlank() && balanceMinor != null && !writeInProgress
+    val canSave = name.text.isNotBlank() && balanceMinor != null && selectedLedgerIds.isNotEmpty() && !writeInProgress
     val scrollBehavior = MiuixScrollBehavior()
     LaunchedEffect(selectedIconKey) {
         iconKey = selectedIconKey
@@ -1402,6 +1407,7 @@ fun AccountEditorScreen(
                 isDefault = isDefault,
                 isArchived = isArchived,
             ),
+            selectedLedgerIds,
             onBack,
         )
     }
@@ -1575,12 +1581,21 @@ fun AccountEditorScreen(
                                 summary = "设置此账户可在哪些账本中使用",
                                 modifier = Modifier.fillMaxWidth(),
                                 endActions = {
-                                    Text(
-                                        text = "全部",
-                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                        style = MiuixTheme.textStyles.body2,
-                                    )
+                                    Row(modifier = Modifier.height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = if (selectedLedgerIds.size == ledgers.size) "全部" else "${selectedLedgerIds.size} 个",
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                            style = MiuixTheme.textStyles.body2,
+                                        )
+                                        Icon(
+                                            imageVector = MiuixIcons.Basic.ArrowRight,
+                                            contentDescription = null,
+                                            modifier = Modifier.padding(start = 6.dp).size(width = 10.dp, height = 16.dp),
+                                            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                        )
+                                    }
                                 },
+                                onClick = { onOpenLedgerPicker(selectedLedgerIds) },
                             )
                             SwitchPreference(
                                 checked = isDefault,
@@ -2205,6 +2220,8 @@ internal fun SecondaryScaffold(
     collapsible: Boolean = true,
     navigationIcon: ImageVector = MiuixIcons.Back,
     navigationContentDescription: String = "返回",
+    actions: @Composable RowScope.() -> Unit = {},
+    bottomBar: @Composable (() -> Unit)? = null,
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val scrollBehavior = MiuixScrollBehavior()
@@ -2233,6 +2250,8 @@ internal fun SecondaryScaffold(
                             title = title,
                             color = Color.Transparent,
                             navigationIcon = topBarNavigationIcon,
+                            actions = actions,
+                            actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                             scrollBehavior = scrollBehavior,
                         )
                     } else {
@@ -2240,11 +2259,14 @@ internal fun SecondaryScaffold(
                             title = title,
                             color = Color.Transparent,
                             navigationIcon = topBarNavigationIcon,
+                            actions = actions,
+                            actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                             scrollBehavior = scrollBehavior,
                         )
                     }
                 }
             },
+            bottomBar = { bottomBar?.invoke() },
             content = { innerPadding ->
                 Box(modifier = Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                     content(innerPadding)

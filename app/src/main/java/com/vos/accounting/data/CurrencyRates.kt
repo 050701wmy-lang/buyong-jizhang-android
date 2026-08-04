@@ -19,6 +19,13 @@ fun convertToCnyMinor(amountMinor: Long, rateToCnyScaled: Long): Long = BigDecim
     .divide(BigDecimal.valueOf(CURRENCY_RATE_SCALE), 0, RoundingMode.HALF_UP)
     .longValueExact()
 
+/** 把来源币种最小单位金额换算为目标币种最小单位金额。 */
+fun convertCurrencyMinor(amountMinor: Long, sourceRateToCnyScaled: Long, targetRateToCnyScaled: Long): Long = BigDecimal
+    .valueOf(amountMinor)
+    .multiply(BigDecimal.valueOf(sourceRateToCnyScaled))
+    .divide(BigDecimal.valueOf(targetRateToCnyScaled), 0, RoundingMode.HALF_UP)
+    .longValueExact()
+
 /**
  * 返回一笔账目按其账户当前汇率换算的人民币分。
  */
@@ -26,6 +33,13 @@ fun TransactionRecord.amountInCnyMinor(): Long = convertToCnyMinor(
     amountMinor = amountMinor,
     rateToCnyScaled = currencyRateToCnyScaled,
 )
+
+/** 把账目金额从账户币种换算为指定本位币的最小单位。 */
+fun TransactionRecord.amountInCurrencyMinor(targetRateToCnyScaled: Long): Long = BigDecimal
+    .valueOf(amountMinor)
+    .multiply(BigDecimal.valueOf(currencyRateToCnyScaled))
+    .divide(BigDecimal.valueOf(targetRateToCnyScaled), 0, RoundingMode.HALF_UP)
+    .longValueExact()
 
 /**
  * 从免密汇率服务读取以人民币为基准的公开汇率。

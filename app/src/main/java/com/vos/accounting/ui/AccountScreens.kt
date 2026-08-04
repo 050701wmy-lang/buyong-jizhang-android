@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -263,7 +264,7 @@ private fun AccountBalanceCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(HERO_CARD_HEIGHT)
+                .aspectRatio(LEDGER_HERO_ASPECT_RATIO)
                 .background(
                     Brush.linearGradient(
                         listOf(

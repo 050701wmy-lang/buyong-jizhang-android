@@ -45,6 +45,7 @@ data class TransactionDraft(
     val note: String,
     val occurredAt: Long,
     val source: TransactionSource,
+    val ledgerId: Long = 1,
 )
 
 /**
