@@ -203,6 +203,133 @@ class AccountingDatabaseTest {
     }
 
     /**
+     * 验证保存账目时固化币种与本位币金额快照，历史报表不随后续汇率变化。
+     */
+    @Test
+    fun saveTransactionFreezesBaseAmountSnapshot() = runBlocking {
+        repository.initialize()
+        val usdAccountId = repository.saveAccount(
+            AccountEntity(
+                name = "美元卡",
+                type = AccountType.BANK_CARD,
+                typeKey = "bank_card",
+                currencyKey = "usd",
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = false,
+            ),
+            setOf(1),
+        )
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 10000,
+                accountId = usdAccountId,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        val stored = dao.findTransaction(id)
+        val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
+        val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
+        assertEquals("usd", stored?.currencyKey)
+        assertEquals(convertCurrencyMinor(10000, usdRate, cnyRate), stored?.baseAmountMinor)
+
+        dao.updateBuiltinCurrencyRate("USD", 800000000, System.currentTimeMillis())
+        val after = dao.findTransaction(id)
+        assertEquals(stored?.baseAmountMinor, after?.baseAmountMinor)
+    }
+
+    /**
+     * 验证收支汇总按固化本位币金额统计。
+     */
+    @Test
+    fun overviewTotalsUseBaseAmountSnapshot() = runBlocking {
+        repository.initialize()
+        val usdAccountId = repository.saveAccount(
+            AccountEntity(
+                name = "美元卡",
+                type = AccountType.BANK_CARD,
+                typeKey = "bank_card",
+                currencyKey = "usd",
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = false,
+            ),
+            setOf(1),
+        )
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 10000,
+                accountId = usdAccountId,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
+        val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
+        val totals = dao.observeOverviewTotals().first()
+        assertEquals(convertCurrencyMinor(10000, usdRate, cnyRate), totals.expenseMinor)
+        assertEquals(0, totals.incomeMinor)
+    }
+
+    /**
+     * 验证币种仍被历史账目使用时拒绝删除。
+     */
+    @Test
+    fun deleteCurrencyRejectsTransactions() = runBlocking {
+        repository.initialize()
+        val currencyKey = repository.addCurrency("测试币", "T$", 50000000)
+        val accountId = repository.saveAccount(
+            AccountEntity(
+                name = "测试账户",
+                type = AccountType.CASH,
+                typeKey = "cash",
+                currencyKey = currencyKey,
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = false,
+            ),
+            setOf(1),
+        )
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 100,
+                accountId = accountId,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        val error = assertThrows(AccountingWriteException::class.java) {
+            runBlocking { repository.deleteCurrency(currencyKey) }
+        }
+        assertEquals("该币种仍被历史账目使用，无法删除", error.message)
+    }
+
+    /**
      * 验证自定义账户类型会持久化名称和可选说明。
      */
     @Test

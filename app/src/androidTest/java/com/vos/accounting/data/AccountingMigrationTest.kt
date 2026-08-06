@@ -378,11 +378,66 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v11 数据升级后固化币种与本位币金额快照。 */
+    @Test
+    fun migrateVersionElevenToVersionTwelve() {
+        helper.createDatabase(DATABASE_NAME, 11).apply {
+            execSQL(
+                "INSERT INTO currencies (`key`, code, name, symbol, rate_to_cny_scaled, is_builtin, updated_at, auto_rate_enabled) " +
+                    "VALUES ('cny','CNY','人民币','¥',100000000,1,0,1),('usd','USD','美元','$',675977000,1,0,1)",
+            )
+            execSQL(
+                "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) " +
+                    "VALUES (1,'日常账本','cover_ocean',1,'cny',0,0)",
+            )
+            execSQL(
+                "INSERT INTO accounts (id, name, type, type_key, currency_key, opening_balance_minor, sort_order, icon_key, is_default, is_archived) " +
+                    "VALUES (1,'现金','CASH','cash','cny',5000,0,'cash',1,0),(2,'美元卡','BANK_CARD','bank_card','usd',0,1,'debit_card',0,0)",
+            )
+            execSQL(
+                "INSERT INTO categories (id, name, type, sort_order, icon_key, is_archived) " +
+                    "VALUES (1,'餐饮','EXPENSE',0,'store',0)",
+            )
+            execSQL(
+                "INSERT INTO transactions (id, type, amount_minor, account_id, category_id, merchant, note, occurred_at, source, ledger_id) " +
+                    "VALUES (1,'EXPENSE',10000,2,1,'','',1,'MANUAL',1),(2,'EXPENSE',5000,1,1,'','',2,'MANUAL',1)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            12,
+            true,
+            AccountingDatabase.MIGRATION_11_12,
+        )
+        migrated.query("SELECT currency_key, base_amount_minor FROM transactions WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals("usd", it.getString(0))
+            assertEquals(67598, it.getLong(1))
+        }
+        migrated.query("SELECT currency_key, base_amount_minor FROM transactions WHERE id = 2").use {
+            it.moveToFirst()
+            assertEquals("cny", it.getString(0))
+            assertEquals(5000, it.getLong(1))
+        }
+        migrated.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_transactions_currency_key'",
+        ).use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        assertThrows(android.database.sqlite.SQLiteConstraintException::class.java) {
+            migrated.execSQL("DELETE FROM currencies WHERE `key` = 'usd'")
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */
     @Test
-    fun migrateVersionOneToVersionEleven() {
+    fun migrateVersionOneToVersionTwelve() {
         helper.createDatabase(DATABASE_NAME, 1).apply {
             execSQL(
                 "INSERT INTO accounts (id, name, type, opening_balance_minor, sort_order) " +
@@ -397,7 +452,7 @@ class AccountingMigrationTest {
 
         val migrated = helper.runMigrationsAndValidate(
             DATABASE_NAME,
-            11,
+            12,
             true,
             AccountingDatabase.MIGRATION_1_2,
             AccountingDatabase.MIGRATION_2_3,
@@ -409,6 +464,7 @@ class AccountingMigrationTest {
             AccountingDatabase.MIGRATION_8_9,
             AccountingDatabase.MIGRATION_9_10,
             AccountingDatabase.MIGRATION_10_11,
+            AccountingDatabase.MIGRATION_11_12,
         )
         migrated.query("SELECT is_default, is_archived FROM accounts WHERE id = 1").use {
             it.moveToFirst()
@@ -459,6 +515,12 @@ class AccountingMigrationTest {
         }
         migrated.query(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_transactions_ledger_id_occurred_at_id'",
+        ).use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        migrated.query(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'index_transactions_currency_key'",
         ).use {
             it.moveToFirst()
             assertEquals(1, it.getInt(0))

@@ -32,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.TransactionRecord
-import com.vos.accounting.data.amountInCurrencyMinor
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -126,22 +125,13 @@ internal fun StatisticsReportContent(
     var selectedType by rememberSaveable { mutableStateOf(TransactionType.EXPENSE) }
     var anchorEpochDay by rememberSaveable { mutableStateOf(today.toEpochDay()) }
     val anchor = LocalDate.ofEpochDay(anchorEpochDay)
-    val ledger = uiState.ledgers.firstOrNull { it.id == uiState.currentLedgerId } ?: return
-    val baseCurrency = uiState.currencies.firstOrNull { it.key == ledger.baseCurrencyKey }
-    if (baseCurrency == null) {
-        MainTabList(innerPadding = innerPadding) {
-            item { EmptyCard(text = "币种数据异常，请恢复相关币种后重试") }
-        }
-        return
-    }
-    val baseRate = baseCurrency.rateToCnyScaled
-    val reportData = remember(uiState.transactions, period, selectedType, anchorEpochDay, baseRate) {
+    if (uiState.ledgers.none { it.id == uiState.currentLedgerId }) return
+    val reportData = remember(uiState.transactions, period, selectedType, anchorEpochDay) {
         buildReportData(
             records = uiState.transactions,
             period = period,
             selectedType = selectedType,
             anchor = anchor,
-            baseRate = baseRate,
         )
     }
 
@@ -740,23 +730,22 @@ private fun buildReportData(
     period: ReportPeriod,
     selectedType: TransactionType,
     anchor: LocalDate,
-    baseRate: Long,
 ): ReportData {
     val range = rangeFor(period, anchor)
     val previousRange = rangeFor(period, shiftAnchor(anchor, period, -1))
     val currentRecords = records.filter { recordDate(it) in range.start..range.end }
     val currentTypeRecords = currentRecords.filter { it.type == selectedType }
-    val currentTotal = currentTypeRecords.sumOf { it.amountInCurrencyMinor(baseRate) }
+    val currentTotal = currentTypeRecords.sumOf(TransactionRecord::baseAmountMinor)
     val previousTotal = records
         .filter { it.type == selectedType && recordDate(it) in previousRange.start..previousRange.end }
-        .sumOf { it.amountInCurrencyMinor(baseRate) }
+        .sumOf(TransactionRecord::baseAmountMinor)
     val dayCount = ChronoUnit.DAYS.between(range.start, range.end) + 1
     val income = currentRecords
         .filter { it.type == TransactionType.INCOME }
-        .sumOf { it.amountInCurrencyMinor(baseRate) }
+        .sumOf(TransactionRecord::baseAmountMinor)
     val expense = currentRecords
         .filter { it.type == TransactionType.EXPENSE }
-        .sumOf { it.amountInCurrencyMinor(baseRate) }
+        .sumOf(TransactionRecord::baseAmountMinor)
 
     return ReportData(
         range = range,
@@ -764,14 +753,14 @@ private fun buildReportData(
         dailyAverageMinor = currentTotal / dayCount,
         comparedWithPreviousMinor = currentTotal - previousTotal,
         balanceMinor = income - expense,
-        currentTrend = currentTrendPoints(records, period, selectedType, range, baseRate),
-        recentTrend = recentTrendPoints(records, period, selectedType, anchor, baseRate),
+        currentTrend = currentTrendPoints(records, period, selectedType, range),
+        recentTrend = recentTrendPoints(records, period, selectedType, anchor),
         categories = currentTypeRecords
             .groupBy(TransactionRecord::categoryName)
             .map { (name, groupedRecords) ->
                 ReportCategory(
                     name = name,
-                    amountMinor = groupedRecords.sumOf { it.amountInCurrencyMinor(baseRate) },
+                    amountMinor = groupedRecords.sumOf(TransactionRecord::baseAmountMinor),
                 )
             }
             .sortedByDescending(ReportCategory::amountMinor),
@@ -822,13 +811,12 @@ private fun currentTrendPoints(
     period: ReportPeriod,
     selectedType: TransactionType,
     range: ReportDateRange,
-    baseRate: Long,
 ): List<ReportPoint> = when (period) {
     ReportPeriod.WEEK -> (0L..6L).map { offset ->
         val date = range.start.plusDays(offset)
         ReportPoint(
             label = WEEKDAY_LABELS[offset.toInt()],
-            amountMinor = amountForRange(records, selectedType, date, date, baseRate),
+            amountMinor = amountForRange(records, selectedType, date, date),
         )
     }
 
@@ -839,7 +827,7 @@ private fun currentTrendPoints(
             val end = minOf(start.plusDays(6), range.end)
             ReportPoint(
                 label = "${index + 1}周",
-                amountMinor = amountForRange(records, selectedType, start, end, baseRate),
+                amountMinor = amountForRange(records, selectedType, start, end),
             )
         }
     }
@@ -853,7 +841,6 @@ private fun currentTrendPoints(
                 selectedType,
                 monthRange.atDay(1),
                 monthRange.atEndOfMonth(),
-                baseRate,
             ),
         )
     }
@@ -867,7 +854,6 @@ private fun recentTrendPoints(
     period: ReportPeriod,
     selectedType: TransactionType,
     anchor: LocalDate,
-    baseRate: Long,
 ): List<ReportPoint> = (5 downTo 0).map { offset ->
     val pointAnchor = shiftAnchor(anchor, period, -offset.toLong())
     val pointRange = rangeFor(period, pointAnchor)
@@ -878,7 +864,6 @@ private fun recentTrendPoints(
             selectedType,
             pointRange.start,
             pointRange.end,
-            baseRate,
         ),
     )
 }
@@ -891,10 +876,9 @@ private fun amountForRange(
     selectedType: TransactionType,
     start: LocalDate,
     end: LocalDate,
-    baseRate: Long,
 ): Long = records
     .filter { it.type == selectedType && recordDate(it) in start..end }
-    .sumOf { it.amountInCurrencyMinor(baseRate) }
+    .sumOf(TransactionRecord::baseAmountMinor)
 
 /**
  * 将账目时间戳转换为设备时区日期。

@@ -80,6 +80,7 @@ class AccountingRepository(
      */
     suspend fun saveTransaction(draft: TransactionDraft): Long {
         validateTransactionDraft(draft)
+        val snapshot = transactionSnapshot(draft)
         return dao.insertTransaction(
             TransactionEntity(
                 type = draft.type,
@@ -91,6 +92,8 @@ class AccountingRepository(
                 occurredAt = draft.occurredAt,
                 source = draft.source,
                 ledgerId = draft.ledgerId,
+                currencyKey = snapshot.currencyKey,
+                baseAmountMinor = snapshot.baseAmountMinor,
             ),
         )
     }
@@ -105,6 +108,7 @@ class AccountingRepository(
         val original = dao.findTransaction(transactionId)
             ?: throw AccountingWriteException("账目不存在或已被删除")
         validateTransactionDraft(draft, original)
+        val snapshot = transactionSnapshot(draft, original)
         val updated = dao.updateTransaction(
             TransactionEntity(
                 id = transactionId,
@@ -117,6 +121,8 @@ class AccountingRepository(
                 occurredAt = draft.occurredAt,
                 source = draft.source,
                 ledgerId = original.ledgerId,
+                currencyKey = snapshot.currencyKey,
+                baseAmountMinor = snapshot.baseAmountMinor,
             ),
         )
         if (updated == 0) throw AccountingWriteException("账目不存在或已被删除")
@@ -290,6 +296,8 @@ class AccountingRepository(
             CurrencyDeleteResult.BUILTIN_CURRENCY -> throw AccountingWriteException("预置币种不能删除")
             CurrencyDeleteResult.ACCOUNT_LINKS -> throw AccountingWriteException("该币种正在被账户使用")
             CurrencyDeleteResult.LEDGER_LINKS -> throw AccountingWriteException("该币种正在被账本作为本位币使用")
+            CurrencyDeleteResult.TRANSACTION_LINKS ->
+                throw AccountingWriteException("该币种仍被历史账目使用，无法删除")
             CurrencyDeleteResult.DELETE_FAILED -> throw AccountingWriteException("币种删除失败")
         }
     }
@@ -423,6 +431,38 @@ class AccountingRepository(
     /**
      * 校验草稿引用的数据与收支方向，并允许编辑账目继续引用原有停用项。
      */
+    /**
+     * 按写入时的账户币种与账本位币固化币种与本位币金额快照。
+     */
+    private suspend fun transactionSnapshot(
+        draft: TransactionDraft,
+        original: TransactionEntity? = null,
+    ): TransactionSnapshot {
+        val ledgerId = original?.ledgerId ?: draft.ledgerId
+        val account = dao.findAccount(draft.accountId)
+            ?: throw AccountingWriteException("所选账户不存在")
+        val ledger = dao.findLedger(ledgerId)
+            ?: throw AccountingWriteException("所选账本不存在")
+        val currency = dao.findCurrency(account.currencyKey)
+            ?: throw AccountingWriteException("账户币种不存在")
+        val baseCurrency = dao.findCurrency(ledger.baseCurrencyKey)
+            ?: throw AccountingWriteException("账本位币不存在")
+        return TransactionSnapshot(
+            currencyKey = currency.key,
+            baseAmountMinor = convertCurrencyMinor(
+                amountMinor = draft.amountMinor,
+                sourceRateToCnyScaled = currency.rateToCnyScaled,
+                targetRateToCnyScaled = baseCurrency.rateToCnyScaled,
+            ),
+        )
+    }
+
+    /** 表示账目写入时固化的币种与本位币金额快照。 */
+    private data class TransactionSnapshot(
+        val currencyKey: String,
+        val baseAmountMinor: Long,
+    )
+
     private suspend fun validateTransactionDraft(
         draft: TransactionDraft,
         original: TransactionEntity? = null,

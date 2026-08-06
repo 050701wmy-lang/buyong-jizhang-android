@@ -62,7 +62,6 @@ import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.TransactionRecord
-import com.vos.accounting.data.amountInCurrencyMinor
 import com.vos.accounting.data.convertCurrencyMinor
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
@@ -938,7 +937,7 @@ fun DetailsScreen(
         .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
     val todayExpense = uiState.transactions
         .filter { it.type == TransactionType.EXPENSE && detailsRecordDate(it) == today }
-        .sumOf { it.amountInCurrencyMinor(baseCurrency.rateToCnyScaled) }
+        .sumOf(TransactionRecord::baseAmountMinor)
     val monthRecords = uiState.transactions.filter {
         YearMonth.from(detailsRecordDate(it)) == currentMonth
     }
@@ -949,10 +948,10 @@ fun DetailsScreen(
                 todayExpense = todayExpense,
                 monthExpense = monthRecords
                     .filter { it.type == TransactionType.EXPENSE }
-                    .sumOf { it.amountInCurrencyMinor(baseCurrency.rateToCnyScaled) },
+                    .sumOf(TransactionRecord::baseAmountMinor),
                 monthIncome = monthRecords
                     .filter { it.type == TransactionType.INCOME }
-                    .sumOf { it.amountInCurrencyMinor(baseCurrency.rateToCnyScaled) },
+                    .sumOf(TransactionRecord::baseAmountMinor),
                 ledger = ledger,
                 currencySymbol = baseCurrency.symbol,
             )
@@ -967,7 +966,6 @@ fun DetailsScreen(
                     DetailsDateGroup(
                         date = entry.key,
                         records = entry.value,
-                        baseCurrencyRate = baseCurrency.rateToCnyScaled,
                         baseCurrencySymbol = baseCurrency.symbol,
                         onEditTransaction = onEditTransaction,
                     )
@@ -1080,16 +1078,15 @@ private fun DetailsSummaryMetric(
 private fun DetailsDateGroup(
     date: LocalDate,
     records: List<TransactionRecord>,
-    baseCurrencyRate: Long,
     baseCurrencySymbol: String,
     onEditTransaction: (Long) -> Unit,
 ) {
     val expense = records
         .filter { it.type == TransactionType.EXPENSE }
-        .sumOf { it.amountInCurrencyMinor(baseCurrencyRate) }
+        .sumOf(TransactionRecord::baseAmountMinor)
     val income = records
         .filter { it.type == TransactionType.INCOME }
-        .sumOf { it.amountInCurrencyMinor(baseCurrencyRate) }
+        .sumOf(TransactionRecord::baseAmountMinor)
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)

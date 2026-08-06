@@ -137,6 +137,7 @@ enum class CurrencyDeleteResult {
     BUILTIN_CURRENCY,
     ACCOUNT_LINKS,
     LEDGER_LINKS,
+    TRANSACTION_LINKS,
     DELETE_FAILED,
 }
 
@@ -289,11 +290,18 @@ data class AppSettingsEntity(
             childColumns = ["ledger_id"],
             onDelete = ForeignKey.RESTRICT,
         ),
+        ForeignKey(
+            entity = CurrencyEntity::class,
+            parentColumns = ["key"],
+            childColumns = ["currency_key"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
     ],
     indices = [
         Index("account_id"),
         Index("category_id"),
         Index("occurred_at"),
+        Index("currency_key"),
         Index(value = ["ledger_id", "occurred_at", "id"]),
     ],
 )
@@ -314,6 +322,10 @@ data class TransactionEntity(
     val source: TransactionSource,
     @ColumnInfo(name = "ledger_id")
     val ledgerId: Long = 1,
+    @ColumnInfo(name = "currency_key")
+    val currencyKey: String = "cny",
+    @ColumnInfo(name = "base_amount_minor")
+    val baseAmountMinor: Long = 0,
 )
 
 /**
@@ -324,6 +336,8 @@ data class TransactionRecord(
     val type: TransactionType,
     @ColumnInfo(name = "amount_minor")
     val amountMinor: Long,
+    @ColumnInfo(name = "base_amount_minor")
+    val baseAmountMinor: Long,
     @ColumnInfo(name = "account_id")
     val accountId: Long,
     @ColumnInfo(name = "category_id")
@@ -391,15 +405,28 @@ interface AccountingDao {
      */
     @Query(
         """
-        SELECT transactions.*, accounts.name AS account_name, categories.name AS category_name,
-            categories.icon_key AS category_icon_key, currencies.`key` AS currency_key,
+        SELECT
+            transactions.id AS id,
+            transactions.type AS type,
+            transactions.amount_minor AS amount_minor,
+            transactions.base_amount_minor AS base_amount_minor,
+            transactions.account_id AS account_id,
+            transactions.category_id AS category_id,
+            transactions.merchant AS merchant,
+            transactions.note AS note,
+            transactions.occurred_at AS occurred_at,
+            transactions.source AS source,
+            transactions.ledger_id AS ledger_id,
+            accounts.name AS account_name,
+            categories.name AS category_name,
+            categories.icon_key AS category_icon_key,
+            transactions.currency_key AS currency_key,
             currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
-            transactions.ledger_id AS ledger_id
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         INNER JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN currencies ON currencies.`key` = accounts.currency_key
+        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
         INNER JOIN app_settings ON app_settings.id = 1
         WHERE transactions.ledger_id = app_settings.current_ledger_id
         ORDER BY occurred_at DESC, transactions.id DESC
@@ -412,15 +439,28 @@ interface AccountingDao {
      */
     @Query(
         """
-        SELECT transactions.*, accounts.name AS account_name, categories.name AS category_name,
-            categories.icon_key AS category_icon_key, currencies.`key` AS currency_key,
+        SELECT
+            transactions.id AS id,
+            transactions.type AS type,
+            transactions.amount_minor AS amount_minor,
+            transactions.base_amount_minor AS base_amount_minor,
+            transactions.account_id AS account_id,
+            transactions.category_id AS category_id,
+            transactions.merchant AS merchant,
+            transactions.note AS note,
+            transactions.occurred_at AS occurred_at,
+            transactions.source AS source,
+            transactions.ledger_id AS ledger_id,
+            accounts.name AS account_name,
+            categories.name AS category_name,
+            categories.icon_key AS category_icon_key,
+            transactions.currency_key AS currency_key,
             currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
-            transactions.ledger_id AS ledger_id
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         INNER JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN currencies ON currencies.`key` = accounts.currency_key
+        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
         ORDER BY occurred_at DESC, transactions.id DESC
         """,
     )
@@ -432,18 +472,10 @@ interface AccountingDao {
     @Query(
         """
         SELECT
-            COALESCE(SUM(CASE WHEN transactions.type = 'INCOME' THEN
-                (transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled
-                ELSE 0 END), 0) AS income_minor,
-            COALESCE(SUM(CASE WHEN transactions.type = 'EXPENSE' THEN
-                (transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled
-                ELSE 0 END), 0) AS expense_minor
+            COALESCE(SUM(CASE WHEN transactions.type = 'INCOME' THEN transactions.base_amount_minor ELSE 0 END), 0) AS income_minor,
+            COALESCE(SUM(CASE WHEN transactions.type = 'EXPENSE' THEN transactions.base_amount_minor ELSE 0 END), 0) AS expense_minor
         FROM transactions
-        INNER JOIN accounts ON accounts.id = transactions.account_id
-        INNER JOIN currencies ON currencies.`key` = accounts.currency_key
         INNER JOIN app_settings ON app_settings.id = 1
-        INNER JOIN ledgers ON ledgers.id = app_settings.current_ledger_id
-        INNER JOIN currencies AS base_currency ON base_currency.`key` = ledgers.base_currency_key
         WHERE transactions.ledger_id = app_settings.current_ledger_id
         """,
     )
@@ -455,14 +487,10 @@ interface AccountingDao {
     @Query(
         """
         SELECT categories.name AS category_name,
-            SUM((transactions.amount_minor * currencies.rate_to_cny_scaled + base_currency.rate_to_cny_scaled / 2) / base_currency.rate_to_cny_scaled) AS amount_minor
+            SUM(transactions.base_amount_minor) AS amount_minor
         FROM transactions
         INNER JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN accounts ON accounts.id = transactions.account_id
-        INNER JOIN currencies ON currencies.`key` = accounts.currency_key
         INNER JOIN app_settings ON app_settings.id = 1
-        INNER JOIN ledgers ON ledgers.id = app_settings.current_ledger_id
-        INNER JOIN currencies AS base_currency ON base_currency.`key` = ledgers.base_currency_key
         WHERE transactions.type = 'EXPENSE' AND transactions.ledger_id = app_settings.current_ledger_id
         GROUP BY categories.id
         ORDER BY amount_minor DESC
@@ -523,6 +551,10 @@ interface AccountingDao {
     /** 返回引用指定账户的历史账目数量。 */
     @Query("SELECT COUNT(*) FROM transactions WHERE account_id = :accountId")
     suspend fun countTransactionsByAccountId(accountId: Long): Int
+
+    /** 返回引用指定币种的账目数量。 */
+    @Query("SELECT COUNT(*) FROM transactions WHERE currency_key = :currencyKey")
+    suspend fun countTransactionsByCurrencyKey(currencyKey: String): Int
 
     /** 返回指定账本。 */
     @Query("SELECT * FROM ledgers WHERE id = :ledgerId")
@@ -705,6 +737,7 @@ interface AccountingDao {
         if (currency.isBuiltin) return CurrencyDeleteResult.BUILTIN_CURRENCY
         if (countAccountsByCurrencyKey(currencyKey) > 0) return CurrencyDeleteResult.ACCOUNT_LINKS
         if (countLedgersByBaseCurrencyKey(currencyKey) > 0) return CurrencyDeleteResult.LEDGER_LINKS
+        if (countTransactionsByCurrencyKey(currencyKey) > 0) return CurrencyDeleteResult.TRANSACTION_LINKS
         return if (deleteCustomCurrency(currencyKey) > 0) {
             CurrencyDeleteResult.SUCCESS
         } else {
@@ -998,7 +1031,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1026,6 +1059,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_8_9,
             MIGRATION_9_10,
             MIGRATION_10_11,
+            MIGRATION_11_12,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1409,6 +1443,67 @@ abstract class AccountingDatabase : RoomDatabase() {
                 )
                 connection.executeMigrationSql(
                     "CREATE INDEX IF NOT EXISTS `index_transactions_occurred_at` ON `transactions` (`occurred_at`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_ledger_id_occurred_at_id` ON `transactions` (`ledger_id`, `occurred_at`, `id`)",
+                )
+            }
+        }
+
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            /** 为账目固化币种与本位币金额快照，历史报表不再随后续汇率变化。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `transactions_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `amount_minor` INTEGER NOT NULL,
+                        `account_id` INTEGER NOT NULL,
+                        `category_id` INTEGER NOT NULL,
+                        `merchant` TEXT NOT NULL,
+                        `note` TEXT NOT NULL,
+                        `occurred_at` INTEGER NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        `currency_key` TEXT NOT NULL,
+                        `base_amount_minor` INTEGER NOT NULL,
+                        FOREIGN KEY(`account_id`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`category_id`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`currency_key`) REFERENCES `currencies`(`key`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `transactions_new`
+                        (`id`, `type`, `amount_minor`, `account_id`, `category_id`, `merchant`, `note`, `occurred_at`, `source`, `ledger_id`, `currency_key`, `base_amount_minor`)
+                    SELECT
+                        `transactions`.`id`, `transactions`.`type`, `transactions`.`amount_minor`,
+                        `transactions`.`account_id`, `transactions`.`category_id`, `transactions`.`merchant`, `transactions`.`note`, `transactions`.`occurred_at`, `transactions`.`source`, `transactions`.`ledger_id`,
+                        COALESCE(`account_currency`.`key`, 'cny'),
+                        (`transactions`.`amount_minor` * COALESCE(`account_currency`.`rate_to_cny_scaled`, `base_currency`.`rate_to_cny_scaled`) + `base_currency`.`rate_to_cny_scaled` / 2) / `base_currency`.`rate_to_cny_scaled`
+                    FROM `transactions`
+                    LEFT JOIN `accounts` ON `accounts`.`id` = `transactions`.`account_id`
+                    LEFT JOIN `currencies` AS `account_currency` ON `account_currency`.`key` = `accounts`.`currency_key`
+                    INNER JOIN `ledgers` ON `ledgers`.`id` = `transactions`.`ledger_id`
+                    INNER JOIN `currencies` AS `base_currency` ON `base_currency`.`key` = `ledgers`.`base_currency_key`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `transactions`")
+                connection.executeMigrationSql("ALTER TABLE `transactions_new` RENAME TO `transactions`")
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_account_id` ON `transactions` (`account_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_category_id` ON `transactions` (`category_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_occurred_at` ON `transactions` (`occurred_at`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_currency_key` ON `transactions` (`currency_key`)",
                 )
                 connection.executeMigrationSql(
                     "CREATE INDEX IF NOT EXISTS `index_transactions_ledger_id_occurred_at_id` ON `transactions` (`ledger_id`, `occurred_at`, `id`)",
