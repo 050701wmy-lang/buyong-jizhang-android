@@ -36,7 +36,9 @@ import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.model.TransferDirection
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.basic.FabPosition
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -85,7 +87,13 @@ fun AccountDetailScreen(
     val expense = accountBalanceTransactions
         .filter { it.type == TransactionType.EXPENSE }
         .sumOf(TransactionRecord::amountMinor)
-    val balance = account.openingBalanceMinor + income - expense
+    val transferIn = accountBalanceTransactions
+        .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN }
+        .sumOf(TransactionRecord::amountMinor)
+    val transferOut = accountBalanceTransactions
+        .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.OUT }
+        .sumOf(TransactionRecord::amountMinor)
+    val balance = account.openingBalanceMinor + income + transferIn - expense - transferOut
     val monthlyTransactions = accountTransactions
         .groupBy(::accountRecordMonth)
         .entries
@@ -318,11 +326,17 @@ private fun AccountMonthCard(
     currencySymbol: String,
     onEditTransaction: (Long) -> Unit,
 ) {
-    val income = records
-        .filter { it.type == TransactionType.INCOME }
+    val inflow = records
+        .filter {
+            it.type == TransactionType.INCOME ||
+                (it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN)
+        }
         .sumOf(TransactionRecord::amountMinor)
-    val expense = records
-        .filter { it.type == TransactionType.EXPENSE }
+    val outflow = records
+        .filter {
+            it.type == TransactionType.EXPENSE ||
+                (it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.OUT)
+        }
         .sumOf(TransactionRecord::amountMinor)
     Card(
         modifier = Modifier
@@ -344,7 +358,7 @@ private fun AccountMonthCard(
                 style = MiuixTheme.textStyles.body1,
             )
             Text(
-                text = "流入 ${formatCurrencyAmount(income, currencySymbol)}  流出 ${formatCurrencyAmount(expense, currencySymbol)}",
+                text = "流入 ${formatCurrencyAmount(inflow, currencySymbol)}  流出 ${formatCurrencyAmount(outflow, currencySymbol)}",
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                 style = MiuixTheme.textStyles.footnote1,
             )
@@ -367,10 +381,11 @@ private fun AccountTransactionRow(
     record: TransactionRecord,
     onClick: () -> Unit,
 ) {
+    val isTransfer = record.type == TransactionType.TRANSFER
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = !isTransfer, onClick = onClick)
             .padding(
                 horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
                 vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
@@ -387,10 +402,14 @@ private fun AccountTransactionRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = accountingCategoryIcon(
-                    iconKey = record.categoryIconKey,
-                    fallbackName = record.categoryName,
-                ),
+                imageVector = if (isTransfer) {
+                    MiuixIcons.Basic.ArrowUpDown
+                } else {
+                    accountingCategoryIcon(
+                        iconKey = record.categoryIconKey,
+                        fallbackName = record.categoryName,
+                    )
+                },
                 contentDescription = null,
                 modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
                 tint = MiuixTheme.colorScheme.primary,
@@ -414,7 +433,10 @@ private fun AccountTransactionRow(
             )
         }
         Text(
-            text = if (record.type == TransactionType.EXPENSE) {
+            text = if (
+                record.type == TransactionType.EXPENSE ||
+                (record.type == TransactionType.TRANSFER && record.transferDirection == TransferDirection.OUT)
+            ) {
                 "-${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
             } else {
                 "+${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"

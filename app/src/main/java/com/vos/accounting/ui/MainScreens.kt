@@ -65,6 +65,7 @@ import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.data.convertCurrencyMinor
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.model.TransferDirection
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.anim.folmeSpring
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
@@ -74,6 +75,7 @@ import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -909,7 +911,12 @@ private fun calculateAccountBalance(
 ): Long = account.openingBalanceMinor + records
     .filter { it.accountId == account.id }
     .sumOf { record ->
-        if (record.type == TransactionType.INCOME) record.amountMinor else -record.amountMinor
+        when {
+            record.type == TransactionType.INCOME -> record.amountMinor
+            record.type == TransactionType.TRANSFER &&
+                record.transferDirection == TransferDirection.IN -> record.amountMinor
+            else -> -record.amountMinor
+        }
     }
 
 /**
@@ -932,6 +939,7 @@ fun DetailsScreen(
     val today = LocalDate.now()
     val currentMonth = YearMonth.from(today)
     val recordsByDate = uiState.transactions
+        .filter { it.type != TransactionType.TRANSFER }
         .groupBy(::detailsRecordDate)
         .entries
         .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
@@ -956,7 +964,7 @@ fun DetailsScreen(
                 currencySymbol = baseCurrency.symbol,
             )
         }
-        if (uiState.transactions.isEmpty()) {
+        if (recordsByDate.isEmpty()) {
             item {
                 EmptyCard(text = "暂无明细")
             }
@@ -1236,6 +1244,7 @@ fun SettingsScreen(
     uiState: AccountingUiState,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
+    onOpenBackup: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
     onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
@@ -1301,6 +1310,34 @@ fun SettingsScreen(
                         title = "预测性返回动画",
                         summary = "开启后边缘返回会随手势移动",
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            item {
+                SectionTitle(text = "数据")
+            }
+            item {
+                Card(
+                    modifier = Modifier
+                        .padding(horizontal = 12.dp)
+                        .padding(bottom = 12.dp),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    BasicComponent(
+                        title = "数据备份与恢复",
+                        summary = "密码导出全部数据，或从备份覆盖恢复",
+                        modifier = Modifier.fillMaxWidth(),
+                        endActions = {
+                            Icon(
+                                imageVector = MiuixIcons.Basic.ArrowRight,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .padding(start = 6.dp)
+                                    .size(width = 10.dp, height = 16.dp),
+                                tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                            )
+                        },
+                        onClick = onOpenBackup,
                     )
                 }
             }

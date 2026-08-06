@@ -8,6 +8,7 @@ import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.model.TransferDirection
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -199,7 +200,7 @@ class AccountingDatabaseTest {
             ),
         )
 
-        assertEquals(200, dao.findTransaction(id)?.amountMinor)
+        assertEquals(200L, dao.findTransaction(id)?.amountMinor)
     }
 
     /**
@@ -295,31 +296,23 @@ class AccountingDatabaseTest {
     fun deleteCurrencyRejectsTransactions() = runBlocking {
         repository.initialize()
         val currencyKey = repository.addCurrency("测试币", "T$", 50000000)
-        val accountId = repository.saveAccount(
-            AccountEntity(
-                name = "测试账户",
-                type = AccountType.CASH,
-                typeKey = "cash",
-                currencyKey = currencyKey,
-                openingBalanceMinor = 0,
-                sortOrder = 0,
-                isDefault = false,
-            ),
-            setOf(1),
-        )
+        val account = dao.observeAccounts().first().single()
         val expenseCategory = dao.observeCategories().first().first {
             it.type == TransactionType.EXPENSE
         }
-        repository.saveTransaction(
-            TransactionDraft(
+        dao.insertTransaction(
+            TransactionEntity(
                 type = TransactionType.EXPENSE,
                 amountMinor = 100,
-                accountId = accountId,
+                accountId = account.id,
                 categoryId = expenseCategory.id,
                 merchant = "",
                 note = "",
                 occurredAt = 1,
                 source = TransactionSource.MANUAL,
+                ledgerId = 1,
+                currencyKey = currencyKey,
+                baseAmountMinor = 50,
             ),
         )
 
@@ -327,6 +320,116 @@ class AccountingDatabaseTest {
             runBlocking { repository.deleteCurrency(currencyKey) }
         }
         assertEquals("该币种仍被历史账目使用，无法删除", error.message)
+    }
+
+    /**
+     * 验证非空账户换币走审计式兑换：创建继任账户、成对转账流水并归档原账户。
+     */
+    @Test
+    fun changeCurrencyOnNonEmptyAccountCreatesExchange() = runBlocking {
+        repository.initialize()
+        val oldId = repository.saveAccount(
+            AccountEntity(
+                name = "人民币卡",
+                type = AccountType.BANK_CARD,
+                typeKey = "bank_card",
+                currencyKey = "cny",
+                openingBalanceMinor = 10000,
+                sortOrder = 0,
+                isDefault = true,
+            ),
+            setOf(1),
+        )
+
+        val newId = repository.saveAccount(
+            AccountEntity(
+                name = "美元卡",
+                type = AccountType.BANK_CARD,
+                typeKey = "bank_card",
+                currencyKey = "usd",
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = true,
+            ).copy(id = oldId),
+            setOf(1),
+        )
+
+        val oldAccount = dao.findAccount(oldId)
+        val newAccount = dao.findAccount(newId)
+        assertEquals(true, oldAccount?.isArchived == true)
+        assertEquals("usd", newAccount?.currencyKey)
+        assertEquals(false, newAccount?.isArchived == true)
+
+        val oldLegs = dao.transactionsByAccount(oldId)
+        val newLegs = dao.transactionsByAccount(newId)
+        assertEquals(1, oldLegs.size)
+        assertEquals(1, newLegs.size)
+        assertEquals(TransactionType.TRANSFER, oldLegs.single().type)
+        assertEquals(TransferDirection.OUT, oldLegs.single().transferDirection)
+        assertEquals(10000, oldLegs.single().amountMinor)
+        assertEquals(TransactionType.TRANSFER, newLegs.single().type)
+        assertEquals(TransferDirection.IN, newLegs.single().transferDirection)
+        assertEquals(oldLegs.single().exchangeId, newLegs.single().exchangeId)
+
+        val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
+        val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
+        assertEquals(convertCurrencyMinor(10000, cnyRate, usdRate), newLegs.single().amountMinor)
+
+        suspend fun balanceOf(accountId: Long, opening: Long): Long = opening + dao.transactionsByAccount(accountId).sumOf {
+            when {
+                it.type == TransactionType.INCOME -> it.amountMinor
+                it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN -> it.amountMinor
+                else -> -it.amountMinor
+            }
+        }
+        assertEquals(0, balanceOf(oldId, oldAccount!!.openingBalanceMinor))
+        assertEquals(
+            convertCurrencyMinor(10000, cnyRate, usdRate),
+            balanceOf(newId, newAccount!!.openingBalanceMinor),
+        )
+
+        // 兑换流水不计入普通收支汇总
+        val totals = dao.observeOverviewTotals().first()
+        assertEquals(0, totals.incomeMinor)
+        assertEquals(0, totals.expenseMinor)
+    }
+
+    /**
+     * 验证空账户换币直接更新币种，不创建继任账户与转账流水。
+     */
+    @Test
+    fun changeCurrencyOnEmptyAccountUpdatesDirectly() = runBlocking {
+        repository.initialize()
+        val id = repository.saveAccount(
+            AccountEntity(
+                name = "空账户",
+                type = AccountType.CASH,
+                typeKey = "cash",
+                currencyKey = "cny",
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = false,
+            ),
+            setOf(1),
+        )
+        val updatedId = repository.saveAccount(
+            AccountEntity(
+                name = "空账户",
+                type = AccountType.CASH,
+                typeKey = "cash",
+                currencyKey = "usd",
+                openingBalanceMinor = 0,
+                sortOrder = 0,
+                isDefault = false,
+            ).copy(id = id),
+            setOf(1),
+        )
+
+        assertEquals(id, updatedId)
+        val account = dao.findAccount(id)
+        assertEquals("usd", account?.currencyKey)
+        assertEquals(false, account?.isArchived == true)
+        assertEquals(0, dao.transactionsByAccount(id).size)
     }
 
     /**

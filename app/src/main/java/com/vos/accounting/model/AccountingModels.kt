@@ -4,16 +4,28 @@ import androidx.room.ColumnInfo
 import kotlinx.serialization.Serializable
 
 /**
- * 表示账目的收支方向。
+ * 表示账目的收支方向，转账流水不参与普通收支统计。
  */
+@Serializable
 enum class TransactionType {
     EXPENSE,
     INCOME,
+    TRANSFER,
+}
+
+/**
+ * 表示转账流水在账户中的出入方向。
+ */
+@Serializable
+enum class TransferDirection {
+    IN,
+    OUT,
 }
 
 /**
  * 表示账目的创建来源。
  */
+@Serializable
 enum class TransactionSource {
     MANUAL,
     AI,

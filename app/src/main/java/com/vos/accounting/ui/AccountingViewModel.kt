@@ -2,8 +2,10 @@ package com.vos.accounting.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import android.content.Context
 import androidx.lifecycle.viewModelScope
-import com.vos.accounting.ai.AiBookkeepingParser
+import com.vos.accounting.backup.BackupManager
+import com.vos.accounting.backup.PreparedBackup
 import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
@@ -48,8 +50,6 @@ data class AccountingUiState(
     val allTransactions: List<TransactionRecord> = emptyList(),
     val totals: OverviewTotals = OverviewTotals(0, 0),
     val expenseCategoryTotals: List<CategoryTotal> = emptyList(),
-    val aiDraft: TransactionDraft? = null,
-    val aiError: String? = null,
     val writeInProgress: Boolean = false,
     val writeError: String? = null,
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
@@ -67,14 +67,11 @@ private data class LedgerAccountState(
 )
 
 /**
- * 管理账本界面状态、AI 草稿和统一保存动作。
+ * 管理账本界面状态和统一保存动作。
  */
 class AccountingViewModel(
     private val repository: AccountingRepository,
-    private val aiParser: AiBookkeepingParser = AiBookkeepingParser(),
 ) : ViewModel() {
-    private val aiDraft = MutableStateFlow<TransactionDraft?>(null)
-    private val aiError = MutableStateFlow<String?>(null)
     private val writeState = MutableStateFlow(AccountingWriteState())
     private var pendingLedgerId: Long? = null
     private var pendingLedgerSelection: (() -> Unit)? = null
@@ -120,13 +117,9 @@ class AccountingViewModel(
     val uiState = combine(
         ledgerStateWithGlobalTransactions,
         repository.settings,
-        aiDraft,
-        aiError,
         writeState,
-    ) { ledger, settings, draft, error, write ->
+    ) { ledger, settings, write ->
         ledger.copy(
-            aiDraft = draft,
-            aiError = error,
             writeInProgress = write.inProgress,
             writeError = write.error,
             themeMode = settings?.themeMode?.let { mode ->
@@ -147,33 +140,6 @@ class AccountingViewModel(
             repository.initialize()
             repository.refreshBuiltinCurrencyRates()
         }
-    }
-
-    /**
-     * 使用自然语言生成一份尚未入账的 AI 草稿。
-     */
-    fun createAiDraft(text: String) {
-        val state = uiState.value
-        try {
-            aiDraft.value = aiParser.parse(
-                text = text,
-                accounts = state.accounts.filterNot(AccountEntity::isArchived),
-                categories = state.categories.filterNot(CategoryEntity::isArchived),
-                occurredAt = System.currentTimeMillis(),
-            ).copy(ledgerId = state.currentLedgerId)
-            aiError.value = null
-        } catch (error: IllegalArgumentException) {
-            aiDraft.value = null
-            aiError.value = error.message
-        }
-    }
-
-    /**
-     * 清空上一次 AI 解析产生的临时状态。
-     */
-    fun clearAiDraft() {
-        aiDraft.value = null
-        aiError.value = null
     }
 
     /**
@@ -211,7 +177,7 @@ class AccountingViewModel(
     }
 
     /**
-     * 保存用户已经确认的手动或 AI 草稿。
+     * 保存用户已经确认的账目草稿。
      */
     fun saveTransaction(
         draft: TransactionDraft,
@@ -219,10 +185,7 @@ class AccountingViewModel(
     ) {
         launchWrite(
             action = { repository.saveTransaction(draft) },
-            onSuccess = {
-                clearAiDraft()
-                onSaved()
-            },
+            onSuccess = { onSaved() },
         )
     }
 
@@ -487,6 +450,43 @@ class AccountingViewModel(
                 )
             }
         }
+    }
+
+    /** 导出当前全部数据为加密备份字节。 */
+    fun exportBackup(
+        context: Context,
+        password: String,
+        onReady: (ByteArray) -> Unit,
+    ) {
+        launchWrite(
+            action = { BackupManager(context.applicationContext, repository.accountingDao).export(password) },
+            onSuccess = onReady,
+        )
+    }
+
+    /** 解密并校验备份文件，返回待恢复内容。 */
+    fun parseBackup(
+        context: Context,
+        blob: ByteArray,
+        password: String,
+        onParsed: (PreparedBackup) -> Unit,
+    ) {
+        launchWrite(
+            action = { BackupManager(context.applicationContext, repository.accountingDao).parse(blob, password) },
+            onSuccess = onParsed,
+        )
+    }
+
+    /** 恢复备份：写入媒体并全量替换数据库。 */
+    fun applyBackup(
+        context: Context,
+        prepared: PreparedBackup,
+        onDone: () -> Unit,
+    ) {
+        launchWrite(
+            action = { BackupManager(context.applicationContext, repository.accountingDao).apply(prepared) },
+            onSuccess = { onDone() },
+        )
     }
 
     companion object {

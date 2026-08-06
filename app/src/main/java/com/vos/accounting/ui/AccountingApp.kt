@@ -19,6 +19,7 @@ import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.model.TransferDirection
 import com.vos.accounting.data.LedgerEntity
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
@@ -114,11 +115,9 @@ data class AccountIconRoute(
 @Serializable
 data object SettingsRoute : AccountingRoute
 
-/**
- * 表示 AI 智能记账二级页面。
- */
+/** 表示数据备份与恢复二级页面。 */
 @Serializable
-data object AiEntryRoute : AccountingRoute
+data object BackupRoute : AccountingRoute
 
 /**
  * 建立 MIUIX 主题、共享模糊内容层与 Navigation 3 页面栈。
@@ -197,7 +196,11 @@ fun AccountingApp() {
                         ManualEntryScreen(
                             uiState = uiState,
                             backdrop = backdrop,
-                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onBack = {
+                                if (backStack.lastOrNull() == route) {
+                                    backStack.removeAt(backStack.lastIndex)
+                                }
+                            },
                             initialAccountId = route.accountId,
                             onSave = viewModel::saveTransaction,
                             onAddCategory = viewModel::addCategory,
@@ -211,7 +214,11 @@ fun AccountingApp() {
                             ManualEntryScreen(
                                 uiState = uiState,
                                 backdrop = backdrop,
-                                onBack = { backStack.removeAt(backStack.lastIndex) },
+                                onBack = {
+                                    if (backStack.lastOrNull() == route) {
+                                        backStack.removeAt(backStack.lastIndex)
+                                    }
+                                },
                                 transaction = transaction,
                                 onSave = viewModel::saveTransaction,
                                 onUpdate = viewModel::updateTransaction,
@@ -248,7 +255,10 @@ fun AccountingApp() {
                         val selectedLedgerIds = accountLedgerSelections[route.accountId] ?: storedLedgerIds
                         val closeEditor = {
                             accountLedgerSelections.remove(route.accountId)
-                            backStack.removeAt(backStack.lastIndex)
+                            accountEditorBackRequests.remove(route.accountId)
+                            if (backStack.lastOrNull() == route) {
+                                backStack.removeAt(backStack.lastIndex)
+                            }
                             Unit
                         }
                         val accountTransactions = uiState.allTransactions.filter {
@@ -258,10 +268,11 @@ fun AccountingApp() {
                             0
                         } else {
                             account.openingBalanceMinor + accountTransactions.sumOf {
-                                if (it.type == TransactionType.INCOME) {
-                                    it.amountMinor
-                                } else {
-                                    -it.amountMinor
+                                when {
+                                    it.type == TransactionType.INCOME -> it.amountMinor
+                                    it.type == TransactionType.TRANSFER &&
+                                        it.transferDirection == TransferDirection.IN -> it.amountMinor
+                                    else -> -it.amountMinor
                                 }
                             }
                         }
@@ -347,15 +358,25 @@ fun AccountingApp() {
                             },
                         )
                     }
-                    entry<LedgerRoute> {
+                    entry<LedgerRoute> { route ->
                         LedgerScreen(
                             ledgers = uiState.ledgers,
                             currentLedgerId = uiState.currentLedgerId,
                             backdrop = backdrop,
-                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onBack = {
+                                if (backStack.lastOrNull() == route) {
+                                    backStack.removeAt(backStack.lastIndex)
+                                }
+                            },
                             onAdd = { navigateTo(LedgerEditorRoute()) },
                             onEdit = { navigateTo(LedgerEditorRoute(it)) },
-                            onSelect = { id -> viewModel.selectLedger(id) { backStack.removeAt(backStack.lastIndex) } },
+                            onSelect = { id ->
+                                viewModel.selectLedger(id) {
+                                    if (backStack.lastOrNull() == route) {
+                                        backStack.removeAt(backStack.lastIndex)
+                                    }
+                                }
+                            },
                         )
                     }
                     entry<LedgerEditorRoute> { route ->
@@ -368,7 +389,11 @@ fun AccountingApp() {
                             currencies = uiState.currencies,
                             writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
-                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onBack = {
+                                if (backStack.lastOrNull() == route) {
+                                    backStack.removeAt(backStack.lastIndex)
+                                }
+                            },
                             onAdd = viewModel::addLedger,
                             onUpdate = viewModel::updateLedger,
                             onDelete = viewModel::deleteLedger,
@@ -394,22 +419,32 @@ fun AccountingApp() {
                             uiState = uiState,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onOpenBackup = { navigateTo(BackupRoute) },
                             onThemeModeChange = viewModel::updateThemeMode,
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
                             onPredictiveBackAnimationEnabledChange =
                                 viewModel::updatePredictiveBackAnimationEnabled,
                         )
                     }
-                    entry<AiEntryRoute> {
-                        AiEntryScreen(
-                            uiState = uiState,
+                    entry<BackupRoute> {
+                        val appContext = LocalContext.current.applicationContext
+                        BackupRestoreScreen(
+                            writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
                             onBack = {
-                                viewModel.clearAiDraft()
-                                backStack.removeAt(backStack.lastIndex)
+                                if (backStack.lastOrNull() == BackupRoute) {
+                                    backStack.removeAt(backStack.lastIndex)
+                                }
                             },
-                            onCreateDraft = viewModel::createAiDraft,
-                            onSave = viewModel::saveTransaction,
+                            onExport = { password, onReady ->
+                                viewModel.exportBackup(appContext, password, onReady)
+                            },
+                            onParse = { blob, password, onParsed ->
+                                viewModel.parseBackup(appContext, blob, password, onParsed)
+                            },
+                            onApply = { prepared, onDone ->
+                                viewModel.applyBackup(appContext, prepared, onDone)
+                            },
                         )
                     }
                 },

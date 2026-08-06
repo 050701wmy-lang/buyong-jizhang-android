@@ -31,6 +31,9 @@ class AccountingRepository(
     val expenseCategoryTotals = dao.observeExpenseCategoryTotals()
     val settings = dao.observeSettings()
 
+    /** 提供数据库访问供备份恢复等基础设施使用。 */
+    internal val accountingDao: AccountingDao get() = dao
+
     /**
      * 建立首次启动所需的默认账本数据。
      */
@@ -155,8 +158,17 @@ class AccountingRepository(
         if (normalized.name.isEmpty()) throw AccountingWriteException("账户名称不能为空")
         if (normalized.iconKey.isBlank()) throw AccountingWriteException("请选择账户图标")
         if (ledgerIds.isEmpty()) throw AccountingWriteException("请至少选择一个适用账本")
+        val existing = if (account.id == 0L) null else dao.findAccount(account.id)
+            ?: throw AccountingWriteException("账户不存在或已被删除")
+        if (existing != null && existing.currencyKey != account.currencyKey && !isAccountEmpty(existing)) {
+            return dao.exchangeAccountCurrency(existing, normalized.copy(isArchived = false), ledgerIds)
+        }
         return dao.saveAccountWithLedgers(normalized, ledgerIds)
     }
+
+    /** 判断账户是否为空，空账户可直接修改币种而不重释历史金额。 */
+    private suspend fun isAccountEmpty(account: AccountEntity): Boolean =
+        account.openingBalanceMinor == 0L && dao.countTransactionsByAccountId(account.id) == 0
 
     /** 新增账本并返回其标识。 */
     suspend fun addLedger(

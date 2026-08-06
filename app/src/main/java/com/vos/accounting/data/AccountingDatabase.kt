@@ -22,12 +22,15 @@ import com.vos.accounting.model.CategoryTotal
 import com.vos.accounting.model.OverviewTotals
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
+import com.vos.accounting.model.TransferDirection
+import kotlinx.serialization.Serializable
 import kotlinx.coroutines.flow.Flow
 
 /**
  * 表示数据库中的资金账户。
  */
 @Entity(tableName = "accounts")
+@Serializable
 data class AccountEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -65,6 +68,7 @@ data class AccountEntity(
         Index(value = ["base_currency_key"]),
     ],
 )
+@Serializable
 data class LedgerEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -91,6 +95,7 @@ data class LedgerEntity(
     ],
     indices = [Index("ledger_id")],
 )
+@Serializable
 data class AccountLedgerCrossRef(
     @ColumnInfo(name = "account_id")
     val accountId: Long,
@@ -148,6 +153,7 @@ enum class CurrencyDeleteResult {
     tableName = "currencies",
     indices = [Index(value = ["name"], unique = true)],
 )
+@Serializable
 data class CurrencyEntity(
     @PrimaryKey
     val key: String,
@@ -192,6 +198,7 @@ fun defaultCurrencies(): List<CurrencyEntity> = listOf(
     tableName = "account_types",
     indices = [Index(value = ["name"], unique = true)],
 )
+@Serializable
 data class AccountTypeEntity(
     @PrimaryKey
     val key: String,
@@ -225,6 +232,7 @@ fun defaultAccountTypes(): List<AccountTypeEntity> = listOf(
     tableName = "categories",
     indices = [Index(value = ["name", "type"], unique = true)],
 )
+@Serializable
 data class CategoryEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -253,6 +261,7 @@ data class CategoryEntity(
     ],
     indices = [Index("current_ledger_id")],
 )
+@Serializable
 data class AppSettingsEntity(
     @PrimaryKey
     val id: Int = 1,
@@ -282,7 +291,7 @@ data class AppSettingsEntity(
             entity = CategoryEntity::class,
             parentColumns = ["id"],
             childColumns = ["category_id"],
-            onDelete = ForeignKey.RESTRICT,
+            onDelete = ForeignKey.SET_NULL,
         ),
         ForeignKey(
             entity = LedgerEntity::class,
@@ -305,6 +314,7 @@ data class AppSettingsEntity(
         Index(value = ["ledger_id", "occurred_at", "id"]),
     ],
 )
+@Serializable
 data class TransactionEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
@@ -314,7 +324,7 @@ data class TransactionEntity(
     @ColumnInfo(name = "account_id")
     val accountId: Long,
     @ColumnInfo(name = "category_id")
-    val categoryId: Long,
+    val categoryId: Long?,
     val merchant: String,
     val note: String,
     @ColumnInfo(name = "occurred_at")
@@ -326,6 +336,10 @@ data class TransactionEntity(
     val currencyKey: String = "cny",
     @ColumnInfo(name = "base_amount_minor")
     val baseAmountMinor: Long = 0,
+    @ColumnInfo(name = "exchange_id")
+    val exchangeId: Long? = null,
+    @ColumnInfo(name = "transfer_direction")
+    val transferDirection: TransferDirection? = null,
 )
 
 /**
@@ -341,7 +355,7 @@ data class TransactionRecord(
     @ColumnInfo(name = "account_id")
     val accountId: Long,
     @ColumnInfo(name = "category_id")
-    val categoryId: Long,
+    val categoryId: Long?,
     val merchant: String,
     val note: String,
     @ColumnInfo(name = "occurred_at")
@@ -361,6 +375,10 @@ data class TransactionRecord(
     val currencyRateToCnyScaled: Long,
     @ColumnInfo(name = "ledger_id")
     val ledgerId: Long,
+    @ColumnInfo(name = "exchange_id")
+    val exchangeId: Long?,
+    @ColumnInfo(name = "transfer_direction")
+    val transferDirection: TransferDirection?,
 )
 
 /**
@@ -418,14 +436,16 @@ interface AccountingDao {
             transactions.source AS source,
             transactions.ledger_id AS ledger_id,
             accounts.name AS account_name,
-            categories.name AS category_name,
-            categories.icon_key AS category_icon_key,
+            COALESCE(categories.name, '币种兑换') AS category_name,
+            COALESCE(categories.icon_key, '') AS category_icon_key,
             transactions.currency_key AS currency_key,
             currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transactions.exchange_id AS exchange_id,
+            transactions.transfer_direction AS transfer_direction
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
-        INNER JOIN categories ON categories.id = transactions.category_id
+        LEFT JOIN categories ON categories.id = transactions.category_id
         INNER JOIN currencies ON currencies.`key` = transactions.currency_key
         INNER JOIN app_settings ON app_settings.id = 1
         WHERE transactions.ledger_id = app_settings.current_ledger_id
@@ -452,14 +472,16 @@ interface AccountingDao {
             transactions.source AS source,
             transactions.ledger_id AS ledger_id,
             accounts.name AS account_name,
-            categories.name AS category_name,
-            categories.icon_key AS category_icon_key,
+            COALESCE(categories.name, '币种兑换') AS category_name,
+            COALESCE(categories.icon_key, '') AS category_icon_key,
             transactions.currency_key AS currency_key,
             currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transactions.exchange_id AS exchange_id,
+            transactions.transfer_direction AS transfer_direction
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
-        INNER JOIN categories ON categories.id = transactions.category_id
+        LEFT JOIN categories ON categories.id = transactions.category_id
         INNER JOIN currencies ON currencies.`key` = transactions.currency_key
         ORDER BY occurred_at DESC, transactions.id DESC
         """,
@@ -551,6 +573,110 @@ interface AccountingDao {
     /** 返回引用指定账户的历史账目数量。 */
     @Query("SELECT COUNT(*) FROM transactions WHERE account_id = :accountId")
     suspend fun countTransactionsByAccountId(accountId: Long): Int
+
+    /** 返回指定账户的全部账目流水。 */
+    @Query("SELECT * FROM transactions WHERE account_id = :accountId ORDER BY occurred_at, id")
+    suspend fun transactionsByAccount(accountId: Long): List<TransactionEntity>
+
+    /** 返回指定账户排序最靠前的账本关联。 */
+    @Query("SELECT ledger_id FROM account_ledger_cross_ref WHERE account_id = :accountId ORDER BY ledger_id LIMIT 1")
+    suspend fun firstLedgerIdByAccount(accountId: Long): Long?
+
+    /** 返回全部账户。 */
+    @Query("SELECT * FROM accounts ORDER BY id")
+    suspend fun getAllAccounts(): List<AccountEntity>
+
+    /** 返回全部账本。 */
+    @Query("SELECT * FROM ledgers ORDER BY id")
+    suspend fun getAllLedgers(): List<LedgerEntity>
+
+    /** 返回全部账户-账本关联。 */
+    @Query("SELECT * FROM account_ledger_cross_ref ORDER BY account_id, ledger_id")
+    suspend fun getAllAccountLedgerCrossRefs(): List<AccountLedgerCrossRef>
+
+    /** 返回全部账户类型。 */
+    @Query("SELECT * FROM account_types ORDER BY `key`")
+    suspend fun getAllAccountTypes(): List<AccountTypeEntity>
+
+    /** 返回全部币种。 */
+    @Query("SELECT * FROM currencies ORDER BY `key`")
+    suspend fun getAllCurrencies(): List<CurrencyEntity>
+
+    /** 返回全部分类。 */
+    @Query("SELECT * FROM categories ORDER BY id")
+    suspend fun getAllCategories(): List<CategoryEntity>
+
+    /** 返回全部账目流水。 */
+    @Query("SELECT * FROM transactions ORDER BY id")
+    suspend fun getAllTransactions(): List<TransactionEntity>
+
+    /** 返回应用设置单行。 */
+    @Query("SELECT * FROM app_settings WHERE id = 1")
+    suspend fun getSettings(): AppSettingsEntity?
+
+    /** 清空全部账目。 */
+    @Query("DELETE FROM transactions")
+    suspend fun deleteAllTransactions()
+
+    /** 清空全部账户-账本关联。 */
+    @Query("DELETE FROM account_ledger_cross_ref")
+    suspend fun deleteAllAccountLedgerCrossRefs()
+
+    /** 清空全部分类。 */
+    @Query("DELETE FROM categories")
+    suspend fun deleteAllCategories()
+
+    /** 清空全部账户。 */
+    @Query("DELETE FROM accounts")
+    suspend fun deleteAllAccounts()
+
+    /** 清空全部账户类型。 */
+    @Query("DELETE FROM account_types")
+    suspend fun deleteAllAccountTypes()
+
+    /** 清空全部账本。 */
+    @Query("DELETE FROM ledgers")
+    suspend fun deleteAllLedgers()
+
+    /** 清空全部币种。 */
+    @Query("DELETE FROM currencies")
+    suspend fun deleteAllCurrencies()
+
+    /** 清空应用设置。 */
+    @Query("DELETE FROM app_settings")
+    suspend fun deleteAllSettings()
+
+    /** 在同一事务中全量替换全部数据，恢复备份时使用。 */
+    @Transaction
+    suspend fun replaceAll(
+        currencies: List<CurrencyEntity>,
+        accountTypes: List<AccountTypeEntity>,
+        ledgers: List<LedgerEntity>,
+        accounts: List<AccountEntity>,
+        categories: List<CategoryEntity>,
+        crossRefs: List<AccountLedgerCrossRef>,
+        transactions: List<TransactionEntity>,
+        settings: AppSettingsEntity?,
+    ) {
+        deleteAllTransactions()
+        deleteAllAccountLedgerCrossRefs()
+        deleteAllSettings()
+        deleteAllCategories()
+        deleteAllAccounts()
+        deleteAllAccountTypes()
+        deleteAllLedgers()
+        deleteAllCurrencies()
+        if (currencies.isNotEmpty()) insertCurrencies(currencies)
+        accountTypes.forEach { insertAccountType(it) }
+        ledgers.forEach { insertLedger(it) }
+        accounts.forEach { insertAccount(it) }
+        if (categories.isNotEmpty()) insertCategories(categories)
+        if (crossRefs.isNotEmpty()) insertAccountLedgerCrossRefs(crossRefs)
+        transactions.forEach { insertTransaction(it) }
+        upsertSettings(settings ?: AppSettingsEntity())
+        ensureDefaultAccount()
+        ensureCurrentLedger()
+    }
 
     /** 返回引用指定币种的账目数量。 */
     @Query("SELECT COUNT(*) FROM transactions WHERE currency_key = :currencyKey")
@@ -837,6 +963,92 @@ interface AccountingDao {
         return accountId
     }
 
+    /** 在同一事务中按审计式兑换把账户余额转入目标币种的继任账户。 */
+    @Transaction
+    suspend fun exchangeAccountCurrency(
+        existing: AccountEntity,
+        desired: AccountEntity,
+        ledgerIds: Set<Long>,
+    ): Long {
+        val balanceMinor = existing.openingBalanceMinor + transactionsByAccount(existing.id).sumOf { record ->
+            when {
+                record.type == TransactionType.INCOME -> record.amountMinor
+                record.type == TransactionType.TRANSFER &&
+                    record.transferDirection == TransferDirection.IN -> record.amountMinor
+                else -> -record.amountMinor
+            }
+        }
+        val oldCurrency = findCurrency(existing.currencyKey)
+            ?: throw AccountingWriteException("账户币种不存在")
+        val newCurrency = findCurrency(desired.currencyKey)
+            ?: throw AccountingWriteException("账户币种不存在")
+        val ledgerId = findCurrentLedgerId() ?: firstLedgerIdByAccount(existing.id) ?: 1L
+        val baseCurrency = findLedger(ledgerId)?.baseCurrencyKey?.let { findCurrency(it) }
+            ?: throw AccountingWriteException("账本位币不存在")
+        val exchangeId = System.currentTimeMillis()
+        val occurredAt = System.currentTimeMillis()
+        val newAccountId = insertAccount(
+            desired.copy(
+                id = 0,
+                openingBalanceMinor = 0,
+                sortOrder = maxAccountSortOrder() + 1,
+                isDefault = desired.isDefault,
+                isArchived = false,
+            ),
+        )
+        insertAccountLedgerCrossRefs(ledgerIds.map { AccountLedgerCrossRef(newAccountId, it) })
+        insertTransaction(
+            TransactionEntity(
+                type = TransactionType.TRANSFER,
+                amountMinor = balanceMinor,
+                accountId = existing.id,
+                categoryId = null,
+                merchant = "",
+                note = "币种兑换转出",
+                occurredAt = occurredAt,
+                source = TransactionSource.MANUAL,
+                ledgerId = ledgerId,
+                currencyKey = oldCurrency.key,
+                baseAmountMinor = convertCurrencyMinor(
+                    balanceMinor,
+                    oldCurrency.rateToCnyScaled,
+                    baseCurrency.rateToCnyScaled,
+                ),
+                exchangeId = exchangeId,
+                transferDirection = TransferDirection.OUT,
+            ),
+        )
+        val newAmountMinor = convertCurrencyMinor(
+            balanceMinor,
+            oldCurrency.rateToCnyScaled,
+            newCurrency.rateToCnyScaled,
+        )
+        insertTransaction(
+            TransactionEntity(
+                type = TransactionType.TRANSFER,
+                amountMinor = newAmountMinor,
+                accountId = newAccountId,
+                categoryId = null,
+                merchant = "",
+                note = "币种兑换转入",
+                occurredAt = occurredAt,
+                source = TransactionSource.MANUAL,
+                ledgerId = ledgerId,
+                currencyKey = newCurrency.key,
+                baseAmountMinor = convertCurrencyMinor(
+                    newAmountMinor,
+                    newCurrency.rateToCnyScaled,
+                    baseCurrency.rateToCnyScaled,
+                ),
+                exchangeId = exchangeId,
+                transferDirection = TransferDirection.IN,
+            ),
+        )
+        markAccountArchived(existing.id)
+        ensureDefaultAccount()
+        return newAccountId
+    }
+
     /**
      * 标记指定账户为停用并清除其默认状态。
      */
@@ -1031,7 +1243,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1060,6 +1272,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_9_10,
             MIGRATION_10_11,
             MIGRATION_11_12,
+            MIGRATION_12_13,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1489,6 +1702,62 @@ abstract class AccountingDatabase : RoomDatabase() {
                     LEFT JOIN `currencies` AS `account_currency` ON `account_currency`.`key` = `accounts`.`currency_key`
                     INNER JOIN `ledgers` ON `ledgers`.`id` = `transactions`.`ledger_id`
                     INNER JOIN `currencies` AS `base_currency` ON `base_currency`.`key` = `ledgers`.`base_currency_key`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `transactions`")
+                connection.executeMigrationSql("ALTER TABLE `transactions_new` RENAME TO `transactions`")
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_account_id` ON `transactions` (`account_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_category_id` ON `transactions` (`category_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_occurred_at` ON `transactions` (`occurred_at`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_currency_key` ON `transactions` (`currency_key`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_ledger_id_occurred_at_id` ON `transactions` (`ledger_id`, `occurred_at`, `id`)",
+                )
+            }
+        }
+
+        internal val MIGRATION_12_13 = object : Migration(12, 13) {
+            /** 为转账流水建立可空分类、兑换分组与出入方向，历史收支分类保持不变。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `transactions_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `amount_minor` INTEGER NOT NULL,
+                        `account_id` INTEGER NOT NULL,
+                        `category_id` INTEGER,
+                        `merchant` TEXT NOT NULL,
+                        `note` TEXT NOT NULL,
+                        `occurred_at` INTEGER NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        `currency_key` TEXT NOT NULL,
+                        `base_amount_minor` INTEGER NOT NULL,
+                        `exchange_id` INTEGER,
+                        `transfer_direction` TEXT,
+                        FOREIGN KEY(`account_id`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`category_id`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL,
+                        FOREIGN KEY(`ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`currency_key`) REFERENCES `currencies`(`key`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `transactions_new`
+                        (`id`, `type`, `amount_minor`, `account_id`, `category_id`, `merchant`, `note`, `occurred_at`, `source`, `ledger_id`, `currency_key`, `base_amount_minor`)
+                    SELECT
+                        `id`, `type`, `amount_minor`, `account_id`, `category_id`, `merchant`, `note`, `occurred_at`, `source`, `ledger_id`, `currency_key`, `base_amount_minor`
+                    FROM `transactions`
                     """.trimIndent(),
                 )
                 connection.executeMigrationSql("DROP TABLE `transactions`")
