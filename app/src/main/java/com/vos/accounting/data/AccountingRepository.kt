@@ -1,11 +1,17 @@
 package com.vos.accounting.data
 
+import com.vos.accounting.model.MAX_AMOUNT_MINOR
+import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.AccountType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 
 /**
  * 表示用户可修正的账务写入错误。
@@ -25,11 +31,14 @@ class AccountingRepository(
     val accountTypes = dao.observeAccountTypes()
     val currencies = dao.observeCurrencies()
     val categories = dao.observeCategories()
-    val transactions = dao.observeTransactions()
-    val allTransactions = dao.observeAllTransactions()
-    val overviewTotals = dao.observeOverviewTotals()
-    val expenseCategoryTotals = dao.observeExpenseCategoryTotals()
     val settings = dao.observeSettings()
+    private val currentLedgerId: Flow<Long> = settings
+        .map { it?.currentLedgerId ?: 1L }
+        .distinctUntilChanged()
+    val transactions = currentLedgerId.flatMapLatest { dao.observeTransactions(it) }
+    val allTransactions = dao.observeAllTransactions()
+    val overviewTotals = currentLedgerId.flatMapLatest { dao.observeOverviewTotals(it) }
+    val expenseCategoryTotals = currentLedgerId.flatMapLatest { dao.observeExpenseCategoryTotals(it) }
 
     /** 提供数据库访问供备份恢复等基础设施使用。 */
     internal val accountingDao: AccountingDao get() = dao
@@ -42,14 +51,18 @@ class AccountingRepository(
     }
 
     /**
-     * 联网刷新预置币种兑人民币汇率，失败时保留本地值。
+     * 仅刷新实际使用中、开启自动汇率且超过缓存有效期的非人民币币种；失败时保留本地值。
      */
     suspend fun refreshBuiltinCurrencyRates() {
-        val builtinCurrencies = currencies.first().filter {
-            it.isBuiltin && it.autoRateEnabled
+        val threshold = System.currentTimeMillis() - RATE_REFRESH_TTL_MILLIS
+        val usedKeys = dao.usedCurrencyKeys().toSet()
+        val targets = currencies.first().filter {
+            it.isBuiltin && it.autoRateEnabled && it.code != "CNY" &&
+                it.key in usedKeys && it.updatedAt < threshold
         }
+        if (targets.isEmpty()) return
         val rates = withContext(Dispatchers.IO) {
-            currencyRateService.fetchRates(builtinCurrencies.map(CurrencyEntity::code).toSet())
+            currencyRateService.fetchRates(targets.map(CurrencyEntity::code).toSet())
         }
         val updatedAt = System.currentTimeMillis()
         rates.forEach { (code, rate) ->
@@ -157,6 +170,9 @@ class AccountingRepository(
         )
         if (normalized.name.isEmpty()) throw AccountingWriteException("账户名称不能为空")
         if (normalized.iconKey.isBlank()) throw AccountingWriteException("请选择账户图标")
+        if (kotlin.math.abs(normalized.openingBalanceMinor) > MAX_AMOUNT_MINOR) {
+            throw AccountingWriteException("期初余额超出上限")
+        }
         if (ledgerIds.isEmpty()) throw AccountingWriteException("请至少选择一个适用账本")
         val existing = if (account.id == 0L) null else dao.findAccount(account.id)
             ?: throw AccountingWriteException("账户不存在或已被删除")
@@ -250,6 +266,7 @@ class AccountingRepository(
         if (normalizedName.isEmpty()) throw AccountingWriteException("币种名称不能为空")
         if (normalizedSymbol.isEmpty()) throw AccountingWriteException("币种符号不能为空")
         if (rateToCnyScaled <= 0) throw AccountingWriteException("币种汇率必须大于零")
+        if (rateToCnyScaled > MAX_RATE_TO_CNY_SCALED) throw AccountingWriteException("币种汇率超出上限")
         val currencyKey = "custom_${System.currentTimeMillis()}"
         val inserted = dao.insertCurrency(
             CurrencyEntity(
@@ -285,6 +302,7 @@ class AccountingRepository(
         if (normalizedName.isEmpty()) throw AccountingWriteException("币种名称不能为空")
         if (normalizedSymbol.isEmpty()) throw AccountingWriteException("币种符号不能为空")
         if (rateToCnyScaled <= 0) throw AccountingWriteException("币种汇率必须大于零")
+        if (rateToCnyScaled > MAX_RATE_TO_CNY_SCALED) throw AccountingWriteException("币种汇率超出上限")
         if (dao.countOtherCurrenciesByName(currencyKey, normalizedName) > 0) {
             throw AccountingWriteException("币种名称不能重复")
         }
@@ -441,6 +459,27 @@ class AccountingRepository(
     }
 
     /**
+     * 更新分类名称与图标，方向、排序与归档状态保持不变。
+     */
+    suspend fun updateCategory(categoryId: Long, name: String, iconKey: String) {
+        val normalizedName = name.trim()
+        if (normalizedName.isEmpty()) throw AccountingWriteException("分类名称不能为空")
+        if (iconKey.isBlank()) throw AccountingWriteException("请选择分类图标")
+        val category = dao.findCategory(categoryId)
+            ?: throw AccountingWriteException("分类不存在")
+        if (dao.countOtherCategoriesByName(categoryId, normalizedName, category.type) > 0) {
+            throw AccountingWriteException("同方向分类名称不能重复")
+        }
+        dao.updateCategory(category.copy(name = normalizedName, iconKey = iconKey))
+    }
+
+    /** 停用指定分类，历史账目继续保留引用。 */
+    suspend fun archiveCategory(categoryId: Long) {
+        if (dao.findCategory(categoryId) == null) throw AccountingWriteException("分类不存在")
+        dao.archiveCategory(categoryId)
+    }
+
+    /**
      * 校验草稿引用的数据与收支方向，并允许编辑账目继续引用原有停用项。
      */
     /**
@@ -459,13 +498,18 @@ class AccountingRepository(
             ?: throw AccountingWriteException("账户币种不存在")
         val baseCurrency = dao.findCurrency(ledger.baseCurrencyKey)
             ?: throw AccountingWriteException("账本位币不存在")
-        return TransactionSnapshot(
-            currencyKey = currency.key,
-            baseAmountMinor = convertCurrencyMinor(
+        val baseAmountMinor = try {
+            convertCurrencyMinor(
                 amountMinor = draft.amountMinor,
                 sourceRateToCnyScaled = currency.rateToCnyScaled,
                 targetRateToCnyScaled = baseCurrency.rateToCnyScaled,
-            ),
+            )
+        } catch (_: ArithmeticException) {
+            throw AccountingWriteException("金额超出可计算范围")
+        }
+        return TransactionSnapshot(
+            currencyKey = currency.key,
+            baseAmountMinor = baseAmountMinor,
         )
     }
 
@@ -480,6 +524,7 @@ class AccountingRepository(
         original: TransactionEntity? = null,
     ) {
         if (draft.amountMinor <= 0) throw AccountingWriteException("金额必须大于零")
+        if (draft.amountMinor > MAX_AMOUNT_MINOR) throw AccountingWriteException("金额超出上限")
         if (draft.occurredAt <= 0) throw AccountingWriteException("记账时间无效")
         val ledgerId = original?.ledgerId ?: draft.ledgerId
         if (dao.findLedger(ledgerId) == null) {

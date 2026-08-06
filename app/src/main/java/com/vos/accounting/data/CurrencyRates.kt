@@ -10,6 +10,9 @@ import java.net.URL
 
 const val CURRENCY_RATE_SCALE = 100_000_000L
 
+/** 自动汇率成功刷新后的缓存有效期。 */
+const val RATE_REFRESH_TTL_MILLIS = 24L * 60 * 60 * 1000
+
 /**
  * 使用定点汇率把账户最小货币单位换算为人民币分。
  */

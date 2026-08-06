@@ -271,13 +271,27 @@ private fun CurrencyCard(
 }
 
 /**
+ * 格式化币种最后成功更新时间。
+ */
+private fun currencyUpdatedTime(timestamp: Long): String = java.time.Instant
+    .ofEpochMilli(timestamp)
+    .atZone(java.time.ZoneId.systemDefault())
+    .format(java.time.format.DateTimeFormatter.ofPattern("M月d日 HH:mm", java.util.Locale.CHINA))
+
+/**
  * 格式化一单位币种对应的人民币汇率。
  */
 private fun currencyRateText(currency: CurrencyEntity): String {
     val rate = BigDecimal.valueOf(currency.rateToCnyScaled, 8).stripTrailingZeros().toPlainString()
     val code = currency.code.ifBlank { currency.name }
     val rateMode = if (currency.isBuiltin) {
-        if (currency.autoRateEnabled) "自动汇率 · " else "手动汇率 · "
+        if (currency.autoRateEnabled && currency.updatedAt > 0) {
+            "自动汇率 · 更新于 ${currencyUpdatedTime(currency.updatedAt)} · "
+        } else if (currency.autoRateEnabled) {
+            "自动汇率 · 待更新 · "
+        } else {
+            "手动汇率 · "
+        }
     } else {
         ""
     }

@@ -3,6 +3,12 @@ package com.vos.accounting.model
 import androidx.room.ColumnInfo
 import kotlinx.serialization.Serializable
 
+/** 单笔账目与账户余额的金额上限（最小货币单位），对应 99,999,999.99 元。 */
+const val MAX_AMOUNT_MINOR = 99_999_999_999L
+
+/** 自定义币种兑人民币汇率的业务上限（定点值），对应 10,000 元。 */
+const val MAX_RATE_TO_CNY_SCALED = 1_000_000_000_000L
+
 /**
  * 表示账目的收支方向，转账流水不参与普通收支统计。
  */

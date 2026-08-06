@@ -65,6 +65,7 @@ import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionSource
+import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.TransactionType
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
@@ -96,6 +97,7 @@ import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Store
 import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.squircle.squircleClip
@@ -203,6 +205,7 @@ fun ManualEntryScreen(
             categories = matchingCategories,
             categoryId = categoryId,
             note = note,
+            merchant = merchant,
             occurredAt = occurredAt,
             canSave = amountMinor != null &&
                 accountId != 0L &&
@@ -214,6 +217,7 @@ fun ManualEntryScreen(
             onSelectType = { type = it },
             onSelectCategory = { categoryId = it },
             onNoteChange = { note = it },
+            onMerchantChange = { merchant = it },
             onOccurredAtChange = { occurredAt = it },
             onShowKeypad = { keypadVisible = true },
             onHideKeypad = { keypadVisible = false },
@@ -278,6 +282,7 @@ private fun ManualEntryContent(
     categories: List<CategoryEntity>,
     categoryId: Long,
     note: TextFieldValue,
+    merchant: TextFieldValue,
     occurredAt: Long,
     canSave: Boolean,
     writeInProgress: Boolean,
@@ -286,6 +291,7 @@ private fun ManualEntryContent(
     onSelectType: (TransactionType) -> Unit,
     onSelectCategory: (Long) -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
+    onMerchantChange: (TextFieldValue) -> Unit,
     onOccurredAtChange: (Long) -> Unit,
     onShowKeypad: () -> Unit,
     onHideKeypad: () -> Unit,
@@ -298,6 +304,7 @@ private fun ManualEntryContent(
     val focusManager = LocalFocusManager.current
     val dismissKeypadInteractionSource = remember { MutableInteractionSource() }
     var noteFocused by rememberSaveable { mutableStateOf(false) }
+    var merchantFocused by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -346,13 +353,16 @@ private fun ManualEntryContent(
             ManualDetailRows(
                 occurredAt = occurredAt,
                 note = note,
+                merchant = merchant,
                 onOccurredAtChange = onOccurredAtChange,
                 onNoteChange = onNoteChange,
+                onMerchantChange = onMerchantChange,
                 onNoteFocusChange = { noteFocused = it },
+                onMerchantFocusChange = { merchantFocused = it },
                 onInteraction = onHideKeypad,
             )
         }
-        if (!noteFocused && keypadVisible) {
+        if (!noteFocused && !merchantFocused && keypadVisible) {
             ManualKeypad(
                 onAmountKey = onAmountKey,
                 onDelete = onAmountDelete,
@@ -375,8 +385,8 @@ private fun ManualEntryContent(
             )
         }
     }
-    LaunchedEffect(noteFocused) {
-        if (noteFocused) onHideKeypad()
+    LaunchedEffect(noteFocused, merchantFocused) {
+        if (noteFocused || merchantFocused) onHideKeypad()
     }
 }
 
@@ -674,9 +684,12 @@ private fun ManualCategoryAddItem(
 private fun ManualDetailRows(
     occurredAt: Long,
     note: TextFieldValue,
+    merchant: TextFieldValue,
     onOccurredAtChange: (Long) -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
+    onMerchantChange: (TextFieldValue) -> Unit,
     onNoteFocusChange: (Boolean) -> Unit,
+    onMerchantFocusChange: (Boolean) -> Unit,
     onInteraction: () -> Unit,
 ) {
     val focusManager = LocalFocusManager.current
@@ -721,6 +734,56 @@ private fun ManualDetailRows(
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
                 tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
+        HorizontalDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(58.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = MiuixIcons.Store,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            Text(
+                text = "对象",
+                modifier = Modifier.padding(start = 8.dp),
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                style = MiuixTheme.textStyles.body2,
+            )
+            BasicTextField(
+                value = merchant,
+                onValueChange = onMerchantChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(start = 20.dp)
+                    .onFocusChanged { onMerchantFocusChange(it.isFocused) },
+                textStyle = MiuixTheme.textStyles.body2.copy(
+                    color = MiuixTheme.colorScheme.onBackground,
+                ),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(
+                    onDone = { focusManager.clearFocus() },
+                ),
+                decorationBox = { innerTextField ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (merchant.text.isEmpty()) {
+                            Text(
+                                text = "点击添加对象",
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(
+                                    alpha = 0.45f,
+                                ),
+                                style = MiuixTheme.textStyles.body2,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
             )
         }
         HorizontalDivider()
@@ -2002,7 +2065,7 @@ private fun parseSignedMoneyToMinor(text: String): Long? {
         amount.movePointRight(2).longValueExact()
     } catch (_: ArithmeticException) {
         null
-    }
+    }?.takeIf { kotlin.math.abs(it) <= MAX_AMOUNT_MINOR }
 }
 
 /**
@@ -2205,8 +2268,12 @@ internal fun calculateManualAmount(expression: String): Long? {
         ?: return parseMoneyToMinor(expression)
     val left = parseMoneyToMinor(expression.substring(0, operatorIndex)) ?: return null
     val right = parseMoneyToMinor(expression.substring(operatorIndex + 1)) ?: return null
-    val result = if (expression[operatorIndex] == '+') left + right else left - right
-    return result.takeIf { it > 0 }
+    val result = try {
+        if (expression[operatorIndex] == '+') Math.addExact(left, right) else Math.subtractExact(left, right)
+    } catch (_: ArithmeticException) {
+        return null
+    }
+    return result.takeIf { it > 0 && it <= MAX_AMOUNT_MINOR }
 }
 
 /**

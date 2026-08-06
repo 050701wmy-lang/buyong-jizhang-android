@@ -14,7 +14,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -410,7 +409,7 @@ private fun LedgerCoverCropDialog(
     }
     WindowDialog(show = sourceKey != null, title = "裁剪账本封面", onDismissRequest = onDismiss) {
         Text("拖动或双指缩放图片，裁剪框固定为 21:9", color = MiuixTheme.colorScheme.onSurfaceVariantSummary, style = MiuixTheme.textStyles.footnote1)
-        BoxWithConstraints(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 12.dp)

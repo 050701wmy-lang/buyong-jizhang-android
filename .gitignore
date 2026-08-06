@@ -11,3 +11,7 @@ app/build/
 *.keystore
 keystore.properties
 
+# 诊断媒体（截图/录屏/帧图），不纳入版本控制
+.codebuddy/
+Screen_recording_*.mp4
+report-*.png

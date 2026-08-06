@@ -447,12 +447,11 @@ interface AccountingDao {
         INNER JOIN accounts ON accounts.id = transactions.account_id
         LEFT JOIN categories ON categories.id = transactions.category_id
         INNER JOIN currencies ON currencies.`key` = transactions.currency_key
-        INNER JOIN app_settings ON app_settings.id = 1
-        WHERE transactions.ledger_id = app_settings.current_ledger_id
+        WHERE transactions.ledger_id = :ledgerId
         ORDER BY occurred_at DESC, transactions.id DESC
         """,
     )
-    fun observeTransactions(): Flow<List<TransactionRecord>>
+    fun observeTransactions(ledgerId: Long): Flow<List<TransactionRecord>>
 
     /**
      * 持续观察跨全部账本的账目，用于计算账户全局资产。
@@ -497,11 +496,10 @@ interface AccountingDao {
             COALESCE(SUM(CASE WHEN transactions.type = 'INCOME' THEN transactions.base_amount_minor ELSE 0 END), 0) AS income_minor,
             COALESCE(SUM(CASE WHEN transactions.type = 'EXPENSE' THEN transactions.base_amount_minor ELSE 0 END), 0) AS expense_minor
         FROM transactions
-        INNER JOIN app_settings ON app_settings.id = 1
-        WHERE transactions.ledger_id = app_settings.current_ledger_id
+        WHERE transactions.ledger_id = :ledgerId
         """,
     )
-    fun observeOverviewTotals(): Flow<OverviewTotals>
+    fun observeOverviewTotals(ledgerId: Long): Flow<OverviewTotals>
 
     /**
      * 持续观察支出分类汇总。
@@ -512,13 +510,12 @@ interface AccountingDao {
             SUM(transactions.base_amount_minor) AS amount_minor
         FROM transactions
         INNER JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN app_settings ON app_settings.id = 1
-        WHERE transactions.type = 'EXPENSE' AND transactions.ledger_id = app_settings.current_ledger_id
+        WHERE transactions.type = 'EXPENSE' AND transactions.ledger_id = :ledgerId
         GROUP BY categories.id
         ORDER BY amount_minor DESC
         """,
     )
-    fun observeExpenseCategoryTotals(): Flow<List<CategoryTotal>>
+    fun observeExpenseCategoryTotals(ledgerId: Long): Flow<List<CategoryTotal>>
 
     /**
      * 持续观察应用外观设置。
@@ -681,6 +678,12 @@ interface AccountingDao {
     /** 返回引用指定币种的账目数量。 */
     @Query("SELECT COUNT(*) FROM transactions WHERE currency_key = :currencyKey")
     suspend fun countTransactionsByCurrencyKey(currencyKey: String): Int
+
+    /** 返回账户或账本实际使用的币种标识。 */
+    @Query(
+        "SELECT DISTINCT currency_key FROM accounts UNION SELECT DISTINCT base_currency_key FROM ledgers",
+    )
+    suspend fun usedCurrencyKeys(): List<String>
 
     /** 返回指定账本。 */
     @Query("SELECT * FROM ledgers WHERE id = :ledgerId")
@@ -1103,6 +1106,10 @@ interface AccountingDao {
      */
     @Update
     suspend fun updateCategory(category: CategoryEntity)
+
+    /** 返回同方向且排除自身后的重名分类数量。 */
+    @Query("SELECT COUNT(*) FROM categories WHERE name = :name AND type = :type AND id != :categoryId")
+    suspend fun countOtherCategoriesByName(categoryId: Long, name: String, type: TransactionType): Int
 
     /**
      * 返回指定方向分类当前最大的排序值。

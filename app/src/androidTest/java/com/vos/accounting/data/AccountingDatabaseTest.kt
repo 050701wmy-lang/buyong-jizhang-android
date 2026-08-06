@@ -2,9 +2,11 @@ package com.vos.accounting.data
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.vos.accounting.model.AccountType
+import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
@@ -284,7 +286,7 @@ class AccountingDatabaseTest {
 
         val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
         val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
-        val totals = dao.observeOverviewTotals().first()
+        val totals = dao.observeOverviewTotals(1).first()
         assertEquals(convertCurrencyMinor(10000, usdRate, cnyRate), totals.expenseMinor)
         assertEquals(0, totals.incomeMinor)
     }
@@ -389,7 +391,7 @@ class AccountingDatabaseTest {
         )
 
         // 兑换流水不计入普通收支汇总
-        val totals = dao.observeOverviewTotals().first()
+        val totals = dao.observeOverviewTotals(1).first()
         assertEquals(0, totals.incomeMinor)
         assertEquals(0, totals.expenseMinor)
     }
@@ -430,6 +432,169 @@ class AccountingDatabaseTest {
         assertEquals("usd", account?.currencyKey)
         assertEquals(false, account?.isArchived == true)
         assertEquals(0, dao.transactionsByAccount(id).size)
+    }
+
+    /**
+     * 验证保存流程拒绝超过业务上限的金额。
+     */
+    @Test
+    fun repositoryRejectsAmountOverCap() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+
+        val error = assertThrows(AccountingWriteException::class.java) {
+            runBlocking {
+                repository.saveTransaction(
+                    TransactionDraft(
+                        type = TransactionType.EXPENSE,
+                        amountMinor = MAX_AMOUNT_MINOR + 1,
+                        accountId = account.id,
+                        categoryId = expenseCategory.id,
+                        merchant = "",
+                        note = "",
+                        occurredAt = 1,
+                        source = TransactionSource.MANUAL,
+                    ),
+                )
+            }
+        }
+        assertEquals("金额超出上限", error.message)
+    }
+
+    /**
+     * 验证分类可编辑名称与图标，方向与排序保持不变。
+     */
+    @Test
+    fun repositoryUpdatesCategoryNameAndIcon() = runBlocking {
+        repository.initialize()
+        val category = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+
+        repository.updateCategory(category.id, " 餐饮美食 ", "store")
+        val updated = dao.findCategory(category.id)
+        assertEquals("餐饮美食", updated?.name)
+        assertEquals(TransactionType.EXPENSE, updated?.type)
+        assertEquals(category.sortOrder, updated?.sortOrder)
+    }
+
+    /**
+     * 验证同方向分类重名被拒绝，跨方向同名允许。
+     */
+    @Test
+    fun repositoryRejectsDuplicateCategoryNameInSameType() = runBlocking {
+        repository.initialize()
+        val expense = dao.observeCategories().first().filter {
+            it.type == TransactionType.EXPENSE
+        }
+        val first = expense.first()
+        val second = expense[1]
+
+        val sameType = assertThrows(AccountingWriteException::class.java) {
+            runBlocking { repository.updateCategory(second.id, first.name, second.iconKey) }
+        }
+        assertEquals("同方向分类名称不能重复", sameType.message)
+
+        val income = dao.observeCategories().first().first {
+            it.type == TransactionType.INCOME
+        }
+        repository.updateCategory(income.id, first.name, income.iconKey)
+        assertEquals(first.name, dao.findCategory(income.id)?.name)
+    }
+
+    /**
+     * 验证停用分类后历史账目仍保留引用。
+     */
+    @Test
+    fun repositoryArchivesCategoryKeepsHistory() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val category = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 100,
+                accountId = account.id,
+                categoryId = category.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        repository.archiveCategory(category.id)
+        assertEquals(true, dao.findCategory(category.id)?.isArchived == true)
+        assertEquals(category.id, dao.findTransaction(id)?.categoryId)
+    }
+
+    /**
+     * 验证 10k 账目 / 5 账本 / 20 账户的批量数据查询与汇总可完整执行。
+     */
+    @Test
+    fun largeDatasetQueriesComplete() = runBlocking {
+        repository.initialize()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        val accountIds = (0 until 20).map { index ->
+            repository.saveAccount(
+                AccountEntity(
+                    name = "账户$index",
+                    type = AccountType.CASH,
+                    typeKey = "cash",
+                    currencyKey = "cny",
+                    openingBalanceMinor = 0,
+                    sortOrder = index,
+                    isDefault = false,
+                ),
+                setOf(1),
+            )
+        }
+        val ledgerIds = (2..5).map { index ->
+            dao.insertLedger(
+                com.vos.accounting.data.LedgerEntity(
+                    name = "账本$index",
+                    coverKey = "cover_ocean",
+                    useLightText = true,
+                    baseCurrencyKey = "cny",
+                    isHidden = false,
+                    sortOrder = index,
+                ),
+            )
+        }
+
+        database.withTransaction {
+            repeat(10_000) { index ->
+                dao.insertTransaction(
+                    TransactionEntity(
+                        type = TransactionType.EXPENSE,
+                        amountMinor = ((index % 1000) + 1).toLong(),
+                        accountId = accountIds[index % accountIds.size],
+                        categoryId = expenseCategory.id,
+                        merchant = "",
+                        note = "",
+                        occurredAt = 1_000_000L + index,
+                        source = TransactionSource.MANUAL,
+                        ledgerId = ledgerIds[index % ledgerIds.size],
+                        currencyKey = "cny",
+                        baseAmountMinor = ((index % 1000) + 1).toLong(),
+                    ),
+                )
+            }
+        }
+
+        assertEquals(10_000, dao.getAllTransactions().size)
+        assertEquals(21, dao.getAllAccounts().size)
+        assertEquals(5, dao.getAllLedgers().size)
+        val totals = dao.observeOverviewTotals(ledgerIds.first()).first()
+        assertEquals(0, totals.incomeMinor)
+        assertTrue(totals.expenseMinor > 0)
     }
 
     /**
@@ -509,7 +674,7 @@ class AccountingDatabaseTest {
             ),
         )
 
-        val record = dao.observeTransactions().first().single()
+        val record = dao.observeTransactions(1).first().single()
         assertEquals("商店", record.merchant)
         assertEquals("午餐", record.note)
     }

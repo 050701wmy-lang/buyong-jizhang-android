@@ -119,6 +119,10 @@ data object SettingsRoute : AccountingRoute
 @Serializable
 data object BackupRoute : AccountingRoute
 
+/** 表示分类管理二级页面。 */
+@Serializable
+data object CategoryManageRoute : AccountingRoute
+
 /**
  * 建立 MIUIX 主题、共享模糊内容层与 Navigation 3 页面栈。
  */
@@ -420,6 +424,7 @@ fun AccountingApp() {
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onOpenBackup = { navigateTo(BackupRoute) },
+                            onOpenCategoryManage = { navigateTo(CategoryManageRoute) },
                             onThemeModeChange = viewModel::updateThemeMode,
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
                             onPredictiveBackAnimationEnabledChange =
@@ -445,6 +450,20 @@ fun AccountingApp() {
                             onApply = { prepared, onDone ->
                                 viewModel.applyBackup(appContext, prepared, onDone)
                             },
+                        )
+                    }
+                    entry<CategoryManageRoute> {
+                        CategoryManageScreen(
+                            categories = uiState.categories,
+                            writeInProgress = uiState.writeInProgress,
+                            backdrop = backdrop,
+                            onBack = {
+                                if (backStack.lastOrNull() == CategoryManageRoute) {
+                                    backStack.removeAt(backStack.lastIndex)
+                                }
+                            },
+                            onUpdate = viewModel::updateCategory,
+                            onArchive = viewModel::archiveCategory,
                         )
                     }
                 },

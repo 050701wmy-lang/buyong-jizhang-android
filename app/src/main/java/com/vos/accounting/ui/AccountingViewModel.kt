@@ -452,6 +452,30 @@ class AccountingViewModel(
         }
     }
 
+    /** 更新分类名称与图标。 */
+    fun updateCategory(
+        categoryId: Long,
+        name: String,
+        iconKey: String,
+        onUpdated: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.updateCategory(categoryId, name, iconKey) },
+            onSuccess = { onUpdated() },
+        )
+    }
+
+    /** 停用指定分类。 */
+    fun archiveCategory(
+        categoryId: Long,
+        onArchived: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.archiveCategory(categoryId) },
+            onSuccess = { onArchived() },
+        )
+    }
+
     /** 导出当前全部数据为加密备份字节。 */
     fun exportBackup(
         context: Context,
