@@ -4,8 +4,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -81,7 +82,7 @@ data class LedgerEditorRoute(val ledgerId: Long = 0) : AccountingRoute
 
 /** 表示账户适用账本多选页面。 */
 @Serializable
-data class AccountLedgerPickerRoute(val selectedIds: List<Long>) : AccountingRoute
+data class AccountLedgerPickerRoute(val accountId: Long) : AccountingRoute
 
 /**
  * 表示账户币种选择二级页面。
@@ -130,10 +131,24 @@ fun AccountingApp() {
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val backStack = rememberNavBackStack(MainRoute)
+    val accountLedgerSelections = remember { mutableStateMapOf<Long, Set<Long>>() }
+    val accountEditorBackRequests = remember { mutableMapOf<Long, () -> Unit>() }
     val navigateTo = remember(backStack) {
         { route: AccountingRoute ->
             if (backStack.lastOrNull() != route) {
                 backStack.add(route)
+            }
+        }
+    }
+    val navigateBack: () -> Unit = {
+        if (backStack.size > 1) {
+            val route = backStack.last()
+            val request = (route as? AccountEditorRoute)
+                ?.let { accountEditorBackRequests[it.accountId] }
+            if (request == null) {
+                backStack.removeAt(backStack.lastIndex)
+            } else {
+                request()
             }
         }
     }
@@ -163,11 +178,7 @@ fun AccountingApp() {
             NavDisplay(
                 transitionEffects = transitionEffects,
                 backStack = backStack,
-                onBack = {
-                    if (backStack.size > 1) {
-                        backStack.removeAt(backStack.lastIndex)
-                    }
-                },
+                onBack = navigateBack,
                 entryProvider = entryProvider {
                     entry<MainRoute> {
                         MainShell(
@@ -217,6 +228,7 @@ fun AccountingApp() {
                                 account = account,
                                 currency = currency,
                                 transactions = uiState.transactions,
+                                balanceTransactions = uiState.allTransactions,
                                 backdrop = backdrop,
                                 onBack = { backStack.removeAt(backStack.lastIndex) },
                                 onEditAccount = { navigateTo(AccountEditorRoute(it)) },
@@ -227,7 +239,19 @@ fun AccountingApp() {
                     }
                     entry<AccountEditorRoute> { route ->
                         val account = uiState.accounts.firstOrNull { it.id == route.accountId }
-                        val accountTransactions = uiState.transactions.filter {
+                        val storedLedgerIds = route.ledgerIds?.toSet()
+                            ?: uiState.accountLedgerCrossRefs
+                                .filter { it.accountId == account?.id }
+                                .map { it.ledgerId }
+                                .toSet()
+                                .ifEmpty { setOf(uiState.currentLedgerId) }
+                        val selectedLedgerIds = accountLedgerSelections[route.accountId] ?: storedLedgerIds
+                        val closeEditor = {
+                            accountLedgerSelections.remove(route.accountId)
+                            backStack.removeAt(backStack.lastIndex)
+                            Unit
+                        }
+                        val accountTransactions = uiState.allTransactions.filter {
                             it.accountId == route.accountId
                         }
                         val currentBalanceMinor = if (account == null) {
@@ -250,19 +274,27 @@ fun AccountingApp() {
                             selectedIconKey = route.iconKey ?: account?.iconKey
                                 ?: defaultAccountIconKey(AccountType.CASH),
                             ledgers = uiState.ledgers,
-                            selectedLedgerIds = route.ledgerIds?.toSet()
-                                ?: uiState.accountLedgerCrossRefs.filter { it.accountId == account?.id }.map { it.ledgerId }.toSet()
-                                    .ifEmpty { setOf(uiState.currentLedgerId) },
+                            selectedLedgerIds = selectedLedgerIds,
                             currentBalanceMinor = currentBalanceMinor,
                             writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
-                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onBack = closeEditor,
+                            onBackRequestChange = { request ->
+                                if (request == null) {
+                                    accountEditorBackRequests.remove(route.accountId)
+                                } else {
+                                    accountEditorBackRequests[route.accountId] = request
+                                }
+                            },
                             onSave = viewModel::saveAccount,
-                            onArchive = viewModel::archiveAccount,
+                            onDelete = viewModel::deleteAccount,
                             onOpenTypePicker = { navigateTo(AccountTypeRoute(it)) },
                             onOpenCurrencyPicker = { navigateTo(CurrencyRoute(it)) },
                             onOpenIconPicker = { navigateTo(AccountIconRoute(it)) },
-                            onOpenLedgerPicker = { navigateTo(AccountLedgerPickerRoute(it.toList())) },
+                            onOpenLedgerPicker = { ids ->
+                                accountLedgerSelections[route.accountId] = ids
+                                navigateTo(AccountLedgerPickerRoute(route.accountId))
+                            },
                         )
                     }
                     entry<AccountTypeRoute> { route ->
@@ -343,17 +375,18 @@ fun AccountingApp() {
                         )
                     }
                     entry<AccountLedgerPickerRoute> { route ->
+                        val selectedLedgerIds = accountLedgerSelections[route.accountId]
+                            ?: uiState.accountLedgerCrossRefs
+                                .filter { it.accountId == route.accountId }
+                                .map { it.ledgerId }
+                                .toSet()
+                                .ifEmpty { setOf(uiState.currentLedgerId) }
                         AccountLedgerPickerScreen(
                             ledgers = uiState.ledgers,
-                            selectedIds = route.selectedIds.toSet(),
+                            selectedIds = selectedLedgerIds,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
-                            onConfirm = { ids ->
-                                val editorIndex = backStack.lastIndex - 1
-                                val editor = backStack[editorIndex] as AccountEditorRoute
-                                backStack[editorIndex] = editor.copy(ledgerIds = ids.toList())
-                                backStack.removeAt(backStack.lastIndex)
-                            },
+                            onSelectionChange = { ids -> accountLedgerSelections[route.accountId] = ids },
                         )
                     }
                     entry<SettingsRoute> {
@@ -383,7 +416,7 @@ fun AccountingApp() {
             )
             BackHandler(
                 enabled = !uiState.predictiveBackAnimationEnabled && backStack.size > 1,
-                onBack = { backStack.removeAt(backStack.lastIndex) },
+                onBack = navigateBack,
             )
             AccountingWriteErrorDialog(
                 message = uiState.writeError,

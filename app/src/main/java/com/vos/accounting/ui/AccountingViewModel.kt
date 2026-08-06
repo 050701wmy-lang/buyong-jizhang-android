@@ -45,6 +45,7 @@ data class AccountingUiState(
     val currentLedgerId: Long = 1,
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionRecord> = emptyList(),
+    val allTransactions: List<TransactionRecord> = emptyList(),
     val totals: OverviewTotals = OverviewTotals(0, 0),
     val expenseCategoryTotals: List<CategoryTotal> = emptyList(),
     val aiDraft: TransactionDraft? = null,
@@ -109,8 +110,15 @@ class AccountingViewModel(
         )
     }
 
-    val uiState = combine(
+    private val ledgerStateWithGlobalTransactions = combine(
         ledgerState,
+        repository.allTransactions,
+    ) { state, allTransactions ->
+        state.copy(allTransactions = allTransactions)
+    }
+
+    val uiState = combine(
+        ledgerStateWithGlobalTransactions,
         repository.settings,
         aiDraft,
         aiError,
@@ -416,6 +424,17 @@ class AccountingViewModel(
         launchWrite(
             action = { repository.archiveAccount(accountId) },
             onSuccess = { onArchived() },
+        )
+    }
+
+    /** 删除没有历史账目的账户并在完成后关闭编辑界面。 */
+    fun deleteAccount(
+        accountId: Long,
+        onDeleted: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.deleteAccount(accountId) },
+            onSuccess = { onDeleted() },
         )
     }
 

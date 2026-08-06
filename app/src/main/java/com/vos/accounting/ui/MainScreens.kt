@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -124,8 +125,8 @@ private const val LEDGER_STACK_NEAR_BACKGROUND_SCALE = 0.986f
 /** 账本叠放中第二层背景卡片的缩放比例。 */
 private const val LEDGER_STACK_FAR_BACKGROUND_SCALE = 0.972f
 
-/** 账本叠放卡片中后一层卡片在顶部露出的高度。 */
-private val LEDGER_STACK_BEHIND_REVEAL = 8.dp
+/** 首页账本叠层中为前景 Hero Card 预留的顶部空间。 */
+private val LEDGER_STACK_FOREGROUND_TOP_INSET = 8.dp
 
 /** 账本叠放卡片释放后触发切换的拖动距离阈值，按卡片高度比例计。 */
 private const val LEDGER_STACK_SWITCH_THRESHOLD = 0.35f
@@ -154,8 +155,11 @@ private const val LEDGER_STACK_NEAR_BACKGROUND_ALPHA = 0.36f
 /** 账本叠放中远层背景卡片的最大透明度。 */
 private const val LEDGER_STACK_FAR_BACKGROUND_ALPHA = 0.18f
 
-/** 账本叠放中背景卡片随主卡换层时的最大纵向位移。 */
-private val LEDGER_STACK_BACKGROUND_OFFSET = 3.dp
+/** 账本叠放中近层背景卡片相对远层的顶部层叠距离。 */
+private val LEDGER_STACK_BACKGROUND_OFFSET = 4.dp
+
+/** 预热远层背景卡片的初始缩放比例。 */
+private const val LEDGER_STACK_PREWARM_BACKGROUND_SCALE = 0.966f
 
 /** 背景账本卡片为避免展示可读文字而叠加的遮罩透明度。 */
 private const val LEDGER_STACK_BACKGROUND_DIM_ALPHA = 0.42f
@@ -186,6 +190,21 @@ private data class LedgerStackTransition(
 )
 
 /**
+ * 抵消账本叠层内部的顶部预留，使首页前景 Hero Card 与其他主分页的首张 Card 对齐，
+ * 同时保留卡片栈完整的裁剪视口和底部间距。
+ */
+private fun Modifier.alignLedgerStackForegroundWithHero(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val topInsetPx = LEDGER_STACK_FOREGROUND_TOP_INSET.roundToPx()
+    layout(
+        width = placeable.width,
+        height = placeable.height - topInsetPx,
+    ) {
+        placeable.placeRelative(x = 0, y = -topInsetPx)
+    }
+}
+
+/**
  * 展示余额、快捷记账入口与最近账目。
  */
 @Composable
@@ -197,13 +216,26 @@ fun HomeScreen(
 ) {
     val activeAccounts = uiState.accounts.filterNot(AccountEntity::isArchived)
     val accountBalances = activeAccounts.associateWith { account ->
-        calculateAccountBalance(account, uiState.transactions)
+        calculateAccountBalance(account, uiState.allTransactions)
     }
     val currencies = uiState.currencies.associateBy(CurrencyEntity::key)
     val availableLedgers = uiState.ledgers.filterNot { it.isHidden }.ifEmpty { uiState.ledgers }
+    if (availableLedgers.isEmpty()) {
+        MainTabList(innerPadding = innerPadding) {
+            item { EmptyCard(text = "暂无账本") }
+        }
+        return
+    }
     val ledger = availableLedgers.firstOrNull { it.id == uiState.currentLedgerId }
-        ?: availableLedgers.firstOrNull()
-        ?: return
+        ?: availableLedgers.first()
+    val hasMissingCurrency = (availableLedgers.map(LedgerRecord::baseCurrencyKey) + activeAccounts.map(AccountEntity::currencyKey))
+        .any { currencies[it] == null }
+    if (hasMissingCurrency) {
+        MainTabList(innerPadding = innerPadding) {
+            item { EmptyCard(text = "币种数据异常，请恢复相关币种后重试") }
+        }
+        return
+    }
     val ledgerSummaries = availableLedgers.associate { visibleLedger ->
         val baseCurrency = currencies.getValue(visibleLedger.baseCurrencyKey)
         val convertedBalances = accountBalances.mapValues { (account, balance) ->
@@ -350,12 +382,19 @@ private fun HomeLedgerStack(
 
     BoxWithConstraints(
         modifier = Modifier
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .then(
+                if (multipleLedgers) {
+                    Modifier.alignLedgerStackForegroundWithHero()
+                } else {
+                    Modifier
+                },
+            ),
     ) {
         val horizontalPaddingPx = with(density) { 12.dp.toPx() }
         val cardWidthPx = constraints.maxWidth - horizontalPaddingPx * 2f
         val cardHeightPx = cardWidthPx / LEDGER_HERO_ASPECT_RATIO
-        val peekPx = with(density) { LEDGER_STACK_BEHIND_REVEAL.toPx() }
+        val peekPx = with(density) { LEDGER_STACK_FOREGROUND_TOP_INSET.toPx() }
         val incomingOffsetPx = with(density) { LEDGER_STACK_INCOMING_OFFSET.toPx() }
         val outgoingOffsetPx = with(density) { LEDGER_STACK_OUTGOING_OFFSET.toPx() }
         val backgroundOffsetPx = with(density) { LEDGER_STACK_BACKGROUND_OFFSET.toPx() }
@@ -473,51 +512,145 @@ private fun HomeLedgerStack(
                     activeTransition?.direction ?: LEDGER_STACK_DEFAULT_DIRECTION,
                 )?.let { background -> ledgers.firstOrNull { it.id == background.toLedgerId } }
             }
-
-            if (multipleLedgers && farBackgroundLedger != null && ledgers.size > 2) {
-                LedgerHeroCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp)
-                        .zIndex(0f)
-                        .graphicsLayer {
-                            scaleX = LEDGER_STACK_FAR_BACKGROUND_SCALE - motionProgress * 0.004f
-                            scaleY = LEDGER_STACK_FAR_BACKGROUND_SCALE - motionProgress * 0.004f
-                            transformOrigin = TransformOrigin(0.5f, 0.5f)
-                            translationY = motionDirection * backgroundOffsetPx * motionProgress * 0.5f
-                            alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA
-                        },
-                    ledger = farBackgroundLedger,
-                    summary = ledgerSummaries.getValue(farBackgroundLedger.id),
-                    contentAlpha = 0f,
-                    depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                )
+            val targetBackgroundTransition = activeTransition?.let { active ->
+                ledgerStackTransition(ledgers, active.toLedgerId, active.direction)
             }
-            if (multipleLedgers && nearBackgroundLedger != null) {
-                LedgerHeroCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp)
-                        .padding(top = 4.dp)
-                        .zIndex(1f)
-                        .graphicsLayer {
-                            scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE - motionProgress * 0.006f
-                            scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE - motionProgress * 0.006f
-                            transformOrigin = TransformOrigin(0.5f, 0.5f)
-                            translationY = motionDirection * backgroundOffsetPx * motionProgress
-                            alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA
-                        },
-                    ledger = nearBackgroundLedger,
-                    summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
-                    contentAlpha = 0f,
-                    depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                )
+            val promotingBackgroundLedger = targetBackgroundTransition?.let { background ->
+                ledgers.firstOrNull { it.id == background.toLedgerId }
+            }
+            val replenishingBackgroundLedger = promotingBackgroundLedger
+                ?.takeIf { ledgers.size > 2 }
+                ?.let { promotingLedger ->
+                    ledgerStackTransition(
+                        ledgers,
+                        promotingLedger.id,
+                        motionDirection.toInt(),
+                    )?.let { background -> ledgers.firstOrNull { it.id == background.toLedgerId } }
+                }
+            val backgroundHandoffTranslation = motionDirection * backgroundOffsetPx *
+                motionProgress * (1f - motionProgress)
+
+            if (multipleLedgers && activeTransition == null) {
+                if (farBackgroundLedger != null && ledgers.size > 2) {
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .zIndex(0f)
+                            .graphicsLayer {
+                                scaleX = LEDGER_STACK_FAR_BACKGROUND_SCALE
+                                scaleY = LEDGER_STACK_FAR_BACKGROUND_SCALE
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA
+                            },
+                        ledger = farBackgroundLedger,
+                        summary = ledgerSummaries.getValue(farBackgroundLedger.id),
+                        contentAlpha = 0f,
+                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                    )
+                }
+                if (nearBackgroundLedger != null) {
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
+                            .zIndex(1f)
+                            .graphicsLayer {
+                                scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA
+                            },
+                        ledger = nearBackgroundLedger,
+                        summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
+                        contentAlpha = 0f,
+                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                    )
+                }
+            } else if (multipleLedgers) {
+                if (replenishingBackgroundLedger != null) {
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .zIndex(0f)
+                            .graphicsLayer {
+                                scaleX = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
+                                    (LEDGER_STACK_FAR_BACKGROUND_SCALE -
+                                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
+                                scaleY = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
+                                    (LEDGER_STACK_FAR_BACKGROUND_SCALE -
+                                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                translationY = backgroundHandoffTranslation * 0.5f
+                                alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA * motionProgress
+                            },
+                        ledger = replenishingBackgroundLedger,
+                        summary = ledgerSummaries.getValue(replenishingBackgroundLedger.id),
+                        contentAlpha = 0f,
+                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                    )
+                }
+                if (promotingBackgroundLedger != null) {
+                    val startsFromFarLayer = ledgers.size > 2
+                    val startScale = if (startsFromFarLayer) {
+                        LEDGER_STACK_FAR_BACKGROUND_SCALE
+                    } else {
+                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE
+                    }
+                    val startAlpha = if (startsFromFarLayer) {
+                        LEDGER_STACK_FAR_BACKGROUND_ALPHA
+                    } else {
+                        0f
+                    }
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .zIndex(0.5f)
+                            .graphicsLayer {
+                                scaleX = startScale +
+                                    (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
+                                scaleY = startScale +
+                                    (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                translationY = backgroundOffsetPx * motionProgress + backgroundHandoffTranslation
+                                alpha = startAlpha +
+                                    (LEDGER_STACK_NEAR_BACKGROUND_ALPHA - startAlpha) * motionProgress
+                            },
+                        ledger = promotingBackgroundLedger,
+                        summary = ledgerSummaries.getValue(promotingBackgroundLedger.id),
+                        contentAlpha = 0f,
+                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                    )
+                }
+                if (nearBackgroundLedger != null) {
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
+                            .zIndex(1f)
+                            .graphicsLayer {
+                                scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                translationY = backgroundHandoffTranslation
+                                alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA * (1f - motionProgress)
+                            },
+                        ledger = nearBackgroundLedger,
+                        summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
+                        contentAlpha = 0f,
+                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                    )
+                }
             }
             LedgerHeroCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
-                    .padding(top = if (multipleLedgers) LEDGER_STACK_BEHIND_REVEAL else 0.dp)
+                    .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp)
                     .zIndex(3f)
                     .graphicsLayer {
                         scaleX = 1f + (LEDGER_STACK_OUTGOING_SCALE - 1f) * motionProgress
@@ -534,7 +667,7 @@ private fun HomeLedgerStack(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
-                        .padding(top = if (multipleLedgers) LEDGER_STACK_BEHIND_REVEAL else 0.dp)
+                        .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp)
                         .zIndex(2f)
                         .graphicsLayer {
                             scaleX = LEDGER_STACK_INCOMING_SCALE +
@@ -790,7 +923,13 @@ fun DetailsScreen(
     onEditTransaction: (Long) -> Unit,
 ) {
     val ledger = uiState.ledgers.firstOrNull { it.id == uiState.currentLedgerId } ?: return
-    val baseCurrency = uiState.currencies.first { it.key == ledger.baseCurrencyKey }
+    val baseCurrency = uiState.currencies.firstOrNull { it.key == ledger.baseCurrencyKey }
+    if (baseCurrency == null) {
+        MainTabList(innerPadding = innerPadding) {
+            item { EmptyCard(text = "币种数据异常，请恢复相关币种后重试") }
+        }
+        return
+    }
     val today = LocalDate.now()
     val currentMonth = YearMonth.from(today)
     val recordsByDate = uiState.transactions

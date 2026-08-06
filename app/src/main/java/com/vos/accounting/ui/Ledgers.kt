@@ -70,6 +70,7 @@ import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.squircle.squircleClip
@@ -500,22 +501,29 @@ fun AccountLedgerPickerScreen(
     selectedIds: Set<Long>,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
-    onConfirm: (Set<Long>) -> Unit,
+    onSelectionChange: (Set<Long>) -> Unit,
 ) {
-    var selection by rememberSaveable { mutableStateOf(selectedIds) }
-    SecondaryScaffold(title = "适用账本", backdrop = backdrop, onBack = onBack, actions = {
-        IconButton({ onConfirm(selection) }, enabled = selection.isNotEmpty(), backgroundColor = Color.Transparent, minWidth = 35.dp, minHeight = 35.dp) {
-            Icon(MiuixIcons.Ok, "确认", Modifier.size(24.dp))
-        }
-    }) { innerPadding ->
+    SecondaryScaffold(
+        title = "适用账本",
+        backdrop = backdrop,
+        onBack = onBack,
+    ) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(top = innerPadding.calculateTopPadding())) {
             item { Spacer(Modifier.height(12.dp)) }
             item {
                 Card(Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp), insideMargin = PaddingValues(0.dp)) {
                     ledgers.forEach { ledger ->
-                        BasicComponent(title = ledger.name, summary = if (ledger.isHidden) "已隐藏" else null, onClick = {
-                            selection = if (ledger.id in selection) selection - ledger.id else selection + ledger.id
-                        }, endActions = if (ledger.id in selection) {{ Icon(MiuixIcons.Ok, null, Modifier.size(20.dp), tint = MiuixTheme.colorScheme.primary) }} else null)
+                        SwitchPreference(
+                            checked = ledger.id in selectedIds,
+                            onCheckedChange = { checked ->
+                                onSelectionChange(
+                                    if (checked) selectedIds + ledger.id else selectedIds - ledger.id,
+                                )
+                            },
+                            title = ledger.name,
+                            summary = if (ledger.isHidden) "已隐藏" else null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

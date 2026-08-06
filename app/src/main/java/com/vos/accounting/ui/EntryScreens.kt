@@ -31,10 +31,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1328,8 +1330,9 @@ fun AccountEditorScreen(
     writeInProgress: Boolean,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
+    onBackRequestChange: ((() -> Unit)?) -> Unit,
     onSave: (AccountEntity, Set<Long>, () -> Unit) -> Unit,
-    onArchive: (Long, () -> Unit) -> Unit,
+    onDelete: (Long, () -> Unit) -> Unit,
     onOpenTypePicker: (String) -> Unit,
     onOpenCurrencyPicker: (String) -> Unit,
     onOpenIconPicker: (String) -> Unit,
@@ -1363,7 +1366,19 @@ fun AccountEditorScreen(
     var isArchived by rememberSaveable(account?.id) {
         mutableStateOf(account?.isArchived ?: false)
     }
+    val initialName = rememberSaveable(account?.id) { account?.name.orEmpty() }
+    val initialBalance = rememberSaveable(account?.id) {
+        if (account == null) "" else manualAmountText(currentBalanceMinor)
+    }
+    val initialTypeKey = rememberSaveable(account?.id) { selectedTypeKey }
+    val initialIconKey = rememberSaveable(account?.id) { selectedIconKey }
+    val initialCurrencyKey = rememberSaveable(account?.id) { selectedCurrencyKey }
+    val initialIsDefault = rememberSaveable(account?.id) { account?.isDefault ?: false }
+    val initialIsArchived = rememberSaveable(account?.id) { account?.isArchived ?: false }
+    val initialLedgerIds = rememberSaveable(account?.id) { selectedLedgerIds.toList() }
     var showBalanceDialog by rememberSaveable { mutableStateOf(false) }
+    var showDiscardDialog by rememberSaveable(account?.id) { mutableStateOf(false) }
+    var showDeleteDialog by rememberSaveable(account?.id) { mutableStateOf(false) }
     val balanceMinor = parseSignedMoneyToMinor(balance.text)
     val transactionNetMinor = if (account == null) {
         0
@@ -1371,6 +1386,26 @@ fun AccountEditorScreen(
         currentBalanceMinor - account.openingBalanceMinor
     }
     val canSave = name.text.isNotBlank() && balanceMinor != null && selectedLedgerIds.isNotEmpty() && !writeInProgress
+    val hasUnsavedChanges = name.text != initialName ||
+        balance.text != initialBalance ||
+        typeKey != initialTypeKey ||
+        iconKey != initialIconKey ||
+        currencyKey != initialCurrencyKey ||
+        isDefault != initialIsDefault ||
+        isArchived != initialIsArchived ||
+        selectedLedgerIds != initialLedgerIds.toSet()
+    val requestBack = {
+        if (hasUnsavedChanges) {
+            showDiscardDialog = true
+        } else {
+            onBack()
+        }
+    }
+    val latestRequestBack by rememberUpdatedState(requestBack)
+    DisposableEffect(Unit) {
+        onBackRequestChange { latestRequestBack() }
+        onDispose { onBackRequestChange(null) }
+    }
     val scrollBehavior = MiuixScrollBehavior()
     LaunchedEffect(selectedIconKey) {
         iconKey = selectedIconKey
@@ -1425,7 +1460,7 @@ fun AccountEditorScreen(
                     canSave = canSave,
                     scrollBehavior = scrollBehavior,
                     backdrop = backdrop,
-                    onBack = onBack,
+                    onBack = requestBack,
                     onSave = saveAccount,
                 )
             },
@@ -1435,7 +1470,7 @@ fun AccountEditorScreen(
                     canSave = canSave,
                     writeInProgress = writeInProgress,
                     backdrop = backdrop,
-                    onArchive = { account?.let { onArchive(it.id, onBack) } },
+                    onDelete = { showDeleteDialog = true },
                     onSave = saveAccount,
                 )
             },
@@ -1624,6 +1659,23 @@ fun AccountEditorScreen(
             }
         }
     }
+    AccountEditorDiscardDialog(
+        show = showDiscardDialog,
+        onDismiss = { showDiscardDialog = false },
+        onConfirm = {
+            showDiscardDialog = false
+            onBack()
+        },
+    )
+    AccountDeleteDialog(
+        account = account,
+        show = showDeleteDialog,
+        writeInProgress = writeInProgress,
+        onDismiss = { showDeleteDialog = false },
+        onConfirm = {
+            account?.let { onDelete(it.id, onBack) }
+        },
+    )
     AccountBalanceDialog(
         show = showBalanceDialog,
         balance = balance,
@@ -1711,7 +1763,7 @@ private fun AccountEditorSectionTitle(text: String) {
 }
 
 /**
- * 展示账户编辑页固定在底部的停用与保存操作。
+ * 展示账户编辑页固定在底部的删除与保存操作。
  */
 @Composable
 private fun AccountEditorActions(
@@ -1719,7 +1771,7 @@ private fun AccountEditorActions(
     canSave: Boolean,
     writeInProgress: Boolean,
     backdrop: LayerBackdrop,
-    onArchive: () -> Unit,
+    onDelete: () -> Unit,
     onSave: () -> Unit,
 ) {
     Row(
@@ -1732,11 +1784,11 @@ private fun AccountEditorActions(
     ) {
         if (account != null) {
             Button(
-                onClick = onArchive,
+                onClick = onDelete,
                 modifier = Modifier.weight(1f),
                 enabled = !writeInProgress,
             ) {
-                Text(text = if (writeInProgress) "处理中…" else "停用")
+                Text(text = if (writeInProgress) "删除中…" else "删除")
             }
         }
         Button(
@@ -1746,6 +1798,72 @@ private fun AccountEditorActions(
             colors = ButtonDefaults.buttonColorsPrimary(),
         ) {
             Text(text = if (writeInProgress) "保存中…" else "保存")
+        }
+    }
+}
+
+/** 确认是否放弃账户编辑页中尚未保存的更改。 */
+@Composable
+private fun AccountEditorDiscardDialog(
+    show: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    WindowDialog(
+        show = show,
+        title = "放弃编辑",
+        summary = "要放弃您所做的更改吗？",
+        onDismissRequest = onDismiss,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(text = "取消")
+            }
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) {
+                Text(text = "放弃")
+            }
+        }
+    }
+}
+
+/** 二次确认删除没有历史账目的账户。 */
+@Composable
+private fun AccountDeleteDialog(
+    account: AccountEntity?,
+    show: Boolean,
+    writeInProgress: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    WindowDialog(
+        show = show && account != null,
+        title = "删除账户",
+        summary = account?.let { "确定删除“${it.name}”吗？" },
+        onDismissRequest = onDismiss,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f),
+                enabled = !writeInProgress,
+            ) {
+                Text(text = "取消")
+            }
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.weight(1f),
+                enabled = !writeInProgress,
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) {
+                Text(text = if (writeInProgress) "删除中…" else "删除")
+            }
         }
     }
 }

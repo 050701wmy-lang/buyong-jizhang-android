@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
@@ -75,6 +76,130 @@ class AccountingDatabaseTest {
         }
         assertEquals(1, activeDefaults.size)
         assertEquals("现金", activeDefaults.single().name)
+    }
+
+    /**
+     * 验证干净安装时先建立币种再建立默认账本，外键约束下初始数据完整。
+     */
+    @Test
+    fun cleanInstallSeedsLedgerAndCurrencies() = runBlocking {
+        repository.initialize()
+
+        val currencyKeys = dao.observeCurrencies().first().map(CurrencyEntity::key)
+        assertTrue("cny" in currencyKeys)
+
+        val ledger = dao.observeLedgers().first().single()
+        assertEquals("cny", ledger.baseCurrencyKey)
+
+        assertEquals(1, dao.observeAccounts().first().size)
+        val crossRefs = dao.observeAccountLedgerCrossRefs().first()
+        assertEquals(setOf(1L), crossRefs.map { it.accountId }.toSet())
+        assertEquals(setOf(1L), crossRefs.map { it.ledgerId }.toSet())
+    }
+
+    /**
+     * 验证保存流程拒绝账本不存在的账目。
+     */
+    @Test
+    fun repositoryRejectsTransactionWithMissingLedger() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+
+        val error = assertThrows(AccountingWriteException::class.java) {
+            runBlocking {
+                repository.saveTransaction(
+                    TransactionDraft(
+                        type = TransactionType.EXPENSE,
+                        amountMinor = 100,
+                        accountId = account.id,
+                        categoryId = expenseCategory.id,
+                        merchant = "",
+                        note = "",
+                        occurredAt = 1,
+                        source = TransactionSource.MANUAL,
+                        ledgerId = 999,
+                    ),
+                )
+            }
+        }
+
+        assertEquals("所选账本不存在", error.message)
+    }
+
+    /**
+     * 验证保存流程拒绝不属于账本的账户。
+     */
+    @Test
+    fun repositoryRejectsAccountNotInLedger() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        dao.deleteAccountLedgerCrossRefs(account.id)
+
+        val error = assertThrows(AccountingWriteException::class.java) {
+            runBlocking {
+                repository.saveTransaction(
+                    TransactionDraft(
+                        type = TransactionType.EXPENSE,
+                        amountMinor = 100,
+                        accountId = account.id,
+                        categoryId = expenseCategory.id,
+                        merchant = "",
+                        note = "",
+                        occurredAt = 1,
+                        source = TransactionSource.MANUAL,
+                    ),
+                )
+            }
+        }
+
+        assertEquals("所选账户不属于当前账本", error.message)
+    }
+
+    /**
+     * 验证编辑历史账目时允许保留原账户与账本的组合。
+     */
+    @Test
+    fun repositoryKeepsOriginalLedgerLinkWhenEditing() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 100,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+        dao.deleteAccountLedgerCrossRefs(account.id)
+
+        repository.updateTransaction(
+            id,
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 200,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        assertEquals(200, dao.findTransaction(id)?.amountMinor)
     }
 
     /**

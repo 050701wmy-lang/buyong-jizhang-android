@@ -52,7 +52,18 @@ data class AccountEntity(
 /** 表示可独立筛选账目并提供主题封面的账本。 */
 @Entity(
     tableName = "ledgers",
-    indices = [Index(value = ["name"], unique = true)],
+    foreignKeys = [
+        ForeignKey(
+            entity = CurrencyEntity::class,
+            parentColumns = ["key"],
+            childColumns = ["base_currency_key"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
+    ],
+    indices = [
+        Index(value = ["name"], unique = true),
+        Index(value = ["base_currency_key"]),
+    ],
 )
 data class LedgerEntity(
     @PrimaryKey(autoGenerate = true)
@@ -104,6 +115,30 @@ data class LedgerRecord(
     @ColumnInfo(name = "transaction_count")
     val transactionCount: Int,
 )
+
+/** 表示账本生命周期操作在同一事务中的结果。 */
+enum class LedgerMutationResult {
+    SUCCESS,
+    NOT_FOUND,
+    CURRENT_LEDGER,
+    HIDDEN_LEDGER,
+    DEFAULT_LEDGER,
+    HAS_TRANSACTIONS,
+    HAS_ACCOUNT_LINKS,
+    SETTINGS_MISSING,
+    UPDATE_FAILED,
+    DELETE_FAILED,
+}
+
+/** 表示币种删除在同一事务中的结果。 */
+enum class CurrencyDeleteResult {
+    SUCCESS,
+    NOT_FOUND,
+    BUILTIN_CURRENCY,
+    ACCOUNT_LINKS,
+    LEDGER_LINKS,
+    DELETE_FAILED,
+}
 
 /**
  * 表示账户可选的预置或自定义币种及其兑人民币汇率。
@@ -205,7 +240,18 @@ data class CategoryEntity(
 /**
  * 表示应用外观设置的单行配置。
  */
-@Entity(tableName = "app_settings")
+@Entity(
+    tableName = "app_settings",
+    foreignKeys = [
+        ForeignKey(
+            entity = LedgerEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["current_ledger_id"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
+    ],
+    indices = [Index("current_ledger_id")],
+)
 data class AppSettingsEntity(
     @PrimaryKey
     val id: Int = 1,
@@ -237,11 +283,18 @@ data class AppSettingsEntity(
             childColumns = ["category_id"],
             onDelete = ForeignKey.RESTRICT,
         ),
+        ForeignKey(
+            entity = LedgerEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["ledger_id"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
     ],
     indices = [
         Index("account_id"),
         Index("category_id"),
         Index("occurred_at"),
+        Index(value = ["ledger_id", "occurred_at", "id"]),
     ],
 )
 data class TransactionEntity(
@@ -355,6 +408,25 @@ interface AccountingDao {
     fun observeTransactions(): Flow<List<TransactionRecord>>
 
     /**
+     * 持续观察跨全部账本的账目，用于计算账户全局资产。
+     */
+    @Query(
+        """
+        SELECT transactions.*, accounts.name AS account_name, categories.name AS category_name,
+            categories.icon_key AS category_icon_key, currencies.`key` AS currency_key,
+            currencies.symbol AS currency_symbol,
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transactions.ledger_id AS ledger_id
+        FROM transactions
+        INNER JOIN accounts ON accounts.id = transactions.account_id
+        INNER JOIN categories ON categories.id = transactions.category_id
+        INNER JOIN currencies ON currencies.`key` = accounts.currency_key
+        ORDER BY occurred_at DESC, transactions.id DESC
+        """,
+    )
+    fun observeAllTransactions(): Flow<List<TransactionRecord>>
+
+    /**
      * 持续观察全部账目的收支汇总。
      */
     @Query(
@@ -428,9 +500,13 @@ interface AccountingDao {
     @Query("UPDATE app_settings SET predictive_back_animation_enabled = :enabled WHERE id = 1")
     suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean)
 
-    /** 切换当前账本。 */
+    /** 返回应用设置中记录的当前账本标识。 */
+    @Query("SELECT current_ledger_id FROM app_settings WHERE id = 1")
+    suspend fun findCurrentLedgerId(): Long?
+
+    /** 更新应用设置中的当前账本标识。 */
     @Query("UPDATE app_settings SET current_ledger_id = :ledgerId WHERE id = 1")
-    suspend fun updateCurrentLedger(ledgerId: Long)
+    suspend fun updateCurrentLedger(ledgerId: Long): Int
 
     /**
      * 返回设置行数量。
@@ -444,9 +520,19 @@ interface AccountingDao {
     @Query("SELECT * FROM accounts WHERE id = :accountId")
     suspend fun findAccount(accountId: Long): AccountEntity?
 
+    /** 返回引用指定账户的历史账目数量。 */
+    @Query("SELECT COUNT(*) FROM transactions WHERE account_id = :accountId")
+    suspend fun countTransactionsByAccountId(accountId: Long): Int
+
     /** 返回指定账本。 */
     @Query("SELECT * FROM ledgers WHERE id = :ledgerId")
     suspend fun findLedger(ledgerId: Long): LedgerEntity?
+
+    /** 返回账户与账本的关联，不存在时返回空。 */
+    @Query(
+        "SELECT * FROM account_ledger_cross_ref WHERE account_id = :accountId AND ledger_id = :ledgerId",
+    )
+    suspend fun findAccountLedgerCrossRef(accountId: Long, ledgerId: Long): AccountLedgerCrossRef?
 
     /** 返回指定账户适用的账本标识。 */
     @Query("SELECT ledger_id FROM account_ledger_cross_ref WHERE account_id = :accountId")
@@ -458,11 +544,63 @@ interface AccountingDao {
 
     /** 更新账本。 */
     @Update
-    suspend fun updateLedger(ledger: LedgerEntity): Int
+    suspend fun updateLedgerRow(ledger: LedgerEntity): Int
 
     /** 删除指定账本。 */
     @Query("DELETE FROM ledgers WHERE id = :ledgerId")
-    suspend fun deleteLedger(ledgerId: Long): Int
+    suspend fun deleteLedgerRow(ledgerId: Long): Int
+
+    /** 返回指定账本下的明细数量。 */
+    @Query("SELECT COUNT(*) FROM transactions WHERE ledger_id = :ledgerId")
+    suspend fun countTransactionsByLedgerId(ledgerId: Long): Int
+
+    /** 返回指定账本关联的账户数量。 */
+    @Query("SELECT COUNT(*) FROM account_ledger_cross_ref WHERE ledger_id = :ledgerId")
+    suspend fun countAccountsByLedgerId(ledgerId: Long): Int
+
+    /** 在同一事务中更新账本，并禁止隐藏当前账本。 */
+    @Transaction
+    suspend fun updateLedgerSafely(ledger: LedgerEntity): LedgerMutationResult {
+        val existing = findLedger(ledger.id) ?: return LedgerMutationResult.NOT_FOUND
+        val currentLedgerId = findCurrentLedgerId() ?: return LedgerMutationResult.SETTINGS_MISSING
+        if (existing.id == currentLedgerId && ledger.isHidden) {
+            return LedgerMutationResult.CURRENT_LEDGER
+        }
+        return if (updateLedgerRow(ledger) > 0) {
+            LedgerMutationResult.SUCCESS
+        } else {
+            LedgerMutationResult.UPDATE_FAILED
+        }
+    }
+
+    /** 在同一事务中切换账本，并拒绝不存在或隐藏的目标账本。 */
+    @Transaction
+    suspend fun selectLedgerSafely(ledgerId: Long): LedgerMutationResult {
+        val ledger = findLedger(ledgerId) ?: return LedgerMutationResult.NOT_FOUND
+        if (ledger.isHidden) return LedgerMutationResult.HIDDEN_LEDGER
+        if (findCurrentLedgerId() == null) return LedgerMutationResult.SETTINGS_MISSING
+        return if (updateCurrentLedger(ledgerId) > 0) {
+            LedgerMutationResult.SUCCESS
+        } else {
+            LedgerMutationResult.UPDATE_FAILED
+        }
+    }
+
+    /** 在同一事务中删除账本，并保护当前账本、明细和账户关联。 */
+    @Transaction
+    suspend fun deleteLedgerSafely(ledgerId: Long): LedgerMutationResult {
+        val ledger = findLedger(ledgerId) ?: return LedgerMutationResult.NOT_FOUND
+        val currentLedgerId = findCurrentLedgerId() ?: return LedgerMutationResult.SETTINGS_MISSING
+        if (ledger.id == currentLedgerId) return LedgerMutationResult.CURRENT_LEDGER
+        if (ledger.id == 1L) return LedgerMutationResult.DEFAULT_LEDGER
+        if (countTransactionsByLedgerId(ledgerId) > 0) return LedgerMutationResult.HAS_TRANSACTIONS
+        if (countAccountsByLedgerId(ledgerId) > 0) return LedgerMutationResult.HAS_ACCOUNT_LINKS
+        return if (deleteLedgerRow(ledgerId) > 0) {
+            LedgerMutationResult.SUCCESS
+        } else {
+            LedgerMutationResult.DELETE_FAILED
+        }
+    }
 
     /** 插入账户与账本关联。 */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -552,9 +690,27 @@ interface AccountingDao {
     @Query("SELECT COUNT(*) FROM accounts WHERE currency_key = :currencyKey")
     suspend fun countAccountsByCurrencyKey(currencyKey: String): Int
 
+    /** 返回使用指定币种作为本位币的账本数量。 */
+    @Query("SELECT COUNT(*) FROM ledgers WHERE base_currency_key = :currencyKey")
+    suspend fun countLedgersByBaseCurrencyKey(currencyKey: String): Int
+
     /** 删除未被账户引用的自定义币种。 */
     @Query("DELETE FROM currencies WHERE `key` = :currencyKey AND is_builtin = 0")
     suspend fun deleteCustomCurrency(currencyKey: String): Int
+
+    /** 在同一事务中校验并删除未被引用的自定义币种。 */
+    @Transaction
+    suspend fun deleteCustomCurrencySafely(currencyKey: String): CurrencyDeleteResult {
+        val currency = findCurrency(currencyKey) ?: return CurrencyDeleteResult.NOT_FOUND
+        if (currency.isBuiltin) return CurrencyDeleteResult.BUILTIN_CURRENCY
+        if (countAccountsByCurrencyKey(currencyKey) > 0) return CurrencyDeleteResult.ACCOUNT_LINKS
+        if (countLedgersByBaseCurrencyKey(currencyKey) > 0) return CurrencyDeleteResult.LEDGER_LINKS
+        return if (deleteCustomCurrency(currencyKey) > 0) {
+            CurrencyDeleteResult.SUCCESS
+        } else {
+            CurrencyDeleteResult.DELETE_FAILED
+        }
+    }
 
     /** 返回除指定币种外使用相同名称的币种数量。 */
     @Query("SELECT COUNT(*) FROM currencies WHERE `key` != :currencyKey AND name = :name")
@@ -654,6 +810,10 @@ interface AccountingDao {
     @Query("UPDATE accounts SET is_archived = 1, is_default = 0 WHERE id = :accountId")
     suspend fun markAccountArchived(accountId: Long)
 
+    /** 删除未被历史账目引用的账户。 */
+    @Query("DELETE FROM accounts WHERE id = :accountId")
+    suspend fun removeAccount(accountId: Long): Int
+
     /**
      * 停用指定账户并为剩余有效账户补齐默认项。
      */
@@ -661,6 +821,14 @@ interface AccountingDao {
     suspend fun archiveAccount(accountId: Long) {
         markAccountArchived(accountId)
         ensureDefaultAccount()
+    }
+
+    /** 删除账户后为剩余有效账户补齐默认项。 */
+    @Transaction
+    suspend fun deleteAccount(accountId: Long): Int {
+        val deleted = removeAccount(accountId)
+        if (deleted > 0) ensureDefaultAccount()
+        return deleted
     }
 
     /**
@@ -745,11 +913,27 @@ interface AccountingDao {
     @Query("SELECT COUNT(*) FROM categories")
     suspend fun countCategories(): Int
 
+    /** 返回排序最靠前且未隐藏的账本。 */
+    @Query("SELECT id FROM ledgers WHERE is_hidden = 0 ORDER BY sort_order, id LIMIT 1")
+    suspend fun firstVisibleLedgerId(): Long?
+
+    /** 修复缺失或指向隐藏账本的当前账本设置。 */
+    @Transaction
+    suspend fun ensureCurrentLedger() {
+        val currentLedger = findCurrentLedgerId()?.let { findLedger(it) }
+        if (currentLedger == null || currentLedger.isHidden) {
+            firstVisibleLedgerId()?.let { updateCurrentLedger(it) }
+        }
+    }
+
     /**
      * 在首次启动时建立默认账户与分类。
      */
     @Transaction
     suspend fun seedDefaults() {
+        if (countCurrencies() == 0) {
+            insertCurrencies(defaultCurrencies())
+        }
         if (countLedgers() == 0) {
             insertLedger(
                 LedgerEntity(
@@ -763,9 +947,6 @@ interface AccountingDao {
         }
         if (countAccountTypes() == 0) {
             insertAccountTypes(defaultAccountTypes())
-        }
-        if (countCurrencies() == 0) {
-            insertCurrencies(defaultCurrencies())
         }
         if (countAccounts() == 0) {
             val accountId = insertAccount(
@@ -785,6 +966,7 @@ interface AccountingDao {
         if (countSettings() == 0) {
             upsertSettings(AppSettingsEntity())
         }
+        ensureCurrentLedger()
         if (countCategories() == 0) {
             insertCategories(
                 listOf(
@@ -816,7 +998,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 9,
+    version = 11,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -842,6 +1024,8 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_6_7,
             MIGRATION_7_8,
             MIGRATION_8_9,
+            MIGRATION_9_10,
+            MIGRATION_10_11,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1069,6 +1253,165 @@ abstract class AccountingDatabase : RoomDatabase() {
                 )
                 connection.executeMigrationSql(
                     "ALTER TABLE app_settings ADD COLUMN current_ledger_id INTEGER NOT NULL DEFAULT 1",
+                )
+            }
+        }
+
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            /** 为账本本位币增加外键，修复历史上已经失效的本位币引用。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `ledgers_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `cover_key` TEXT NOT NULL,
+                        `use_light_text` INTEGER NOT NULL,
+                        `base_currency_key` TEXT NOT NULL,
+                        `is_hidden` INTEGER NOT NULL,
+                        `sort_order` INTEGER NOT NULL,
+                        FOREIGN KEY(`base_currency_key`) REFERENCES `currencies`(`key`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `ledgers_new`
+                        (`id`, `name`, `cover_key`, `use_light_text`, `base_currency_key`, `is_hidden`, `sort_order`)
+                    SELECT
+                        `id`, `name`, `cover_key`, `use_light_text`,
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM `currencies` WHERE `currencies`.`key` = `ledgers`.`base_currency_key`
+                        ) THEN `base_currency_key` ELSE 'cny' END,
+                        `is_hidden`, `sort_order`
+                    FROM `ledgers`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `account_ledger_cross_ref_hold` (
+                        `account_id` INTEGER NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        PRIMARY KEY(`account_id`, `ledger_id`)
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `account_ledger_cross_ref_hold` (`account_id`, `ledger_id`)
+                    SELECT `account_id`, `ledger_id` FROM `account_ledger_cross_ref`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `account_ledger_cross_ref`")
+                connection.executeMigrationSql("DROP TABLE `ledgers`")
+                connection.executeMigrationSql("ALTER TABLE `ledgers_new` RENAME TO `ledgers`")
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `account_ledger_cross_ref` (
+                        `account_id` INTEGER NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        PRIMARY KEY(`account_id`, `ledger_id`),
+                        FOREIGN KEY(`account_id`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(`ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `account_ledger_cross_ref` (`account_id`, `ledger_id`)
+                    SELECT `account_id`, `ledger_id` FROM `account_ledger_cross_ref_hold`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `account_ledger_cross_ref_hold`")
+                connection.executeMigrationSql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_ledgers_name` ON `ledgers` (`name`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_ledgers_base_currency_key` ON `ledgers` (`base_currency_key`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_account_ledger_cross_ref_ledger_id` ON `account_ledger_cross_ref` (`ledger_id`)",
+                )
+            }
+        }
+
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            /** 为当前账本与账目归属补充数据库外键，修复悬空引用并建立账本时间索引。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `app_settings_new` (
+                        `id` INTEGER NOT NULL,
+                        `theme_mode` TEXT NOT NULL,
+                        `follow_system_color` INTEGER NOT NULL,
+                        `predictive_back_animation_enabled` INTEGER NOT NULL DEFAULT 0,
+                        `current_ledger_id` INTEGER NOT NULL DEFAULT 1,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`current_ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `app_settings_new`
+                        (`id`, `theme_mode`, `follow_system_color`, `predictive_back_animation_enabled`, `current_ledger_id`)
+                    SELECT
+                        `id`, `theme_mode`, `follow_system_color`, `predictive_back_animation_enabled`,
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM `ledgers` WHERE `ledgers`.`id` = `app_settings`.`current_ledger_id`
+                        ) THEN `current_ledger_id` ELSE 1 END
+                    FROM `app_settings`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `app_settings`")
+                connection.executeMigrationSql("ALTER TABLE `app_settings_new` RENAME TO `app_settings`")
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_app_settings_current_ledger_id` ON `app_settings` (`current_ledger_id`)",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS `transactions_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `amount_minor` INTEGER NOT NULL,
+                        `account_id` INTEGER NOT NULL,
+                        `category_id` INTEGER NOT NULL,
+                        `merchant` TEXT NOT NULL,
+                        `note` TEXT NOT NULL,
+                        `occurred_at` INTEGER NOT NULL,
+                        `source` TEXT NOT NULL,
+                        `ledger_id` INTEGER NOT NULL,
+                        FOREIGN KEY(`account_id`) REFERENCES `accounts`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`category_id`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(`ledger_id`) REFERENCES `ledgers`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO `transactions_new`
+                        (`id`, `type`, `amount_minor`, `account_id`, `category_id`, `merchant`, `note`, `occurred_at`, `source`, `ledger_id`)
+                    SELECT
+                        `id`, `type`, `amount_minor`, `account_id`, `category_id`, `merchant`, `note`, `occurred_at`, `source`,
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM `ledgers` WHERE `ledgers`.`id` = `transactions`.`ledger_id`
+                        ) THEN `ledger_id` ELSE 1 END
+                    FROM `transactions`
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE `transactions`")
+                connection.executeMigrationSql("ALTER TABLE `transactions_new` RENAME TO `transactions`")
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_account_id` ON `transactions` (`account_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_category_id` ON `transactions` (`category_id`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_occurred_at` ON `transactions` (`occurred_at`)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX IF NOT EXISTS `index_transactions_ledger_id_occurred_at_id` ON `transactions` (`ledger_id`, `occurred_at`, `id`)",
                 )
             }
         }

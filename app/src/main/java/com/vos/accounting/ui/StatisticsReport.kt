@@ -127,7 +127,14 @@ internal fun StatisticsReportContent(
     var anchorEpochDay by rememberSaveable { mutableStateOf(today.toEpochDay()) }
     val anchor = LocalDate.ofEpochDay(anchorEpochDay)
     val ledger = uiState.ledgers.firstOrNull { it.id == uiState.currentLedgerId } ?: return
-    val baseRate = uiState.currencies.first { it.key == ledger.baseCurrencyKey }.rateToCnyScaled
+    val baseCurrency = uiState.currencies.firstOrNull { it.key == ledger.baseCurrencyKey }
+    if (baseCurrency == null) {
+        MainTabList(innerPadding = innerPadding) {
+            item { EmptyCard(text = "币种数据异常，请恢复相关币种后重试") }
+        }
+        return
+    }
+    val baseRate = baseCurrency.rateToCnyScaled
     val reportData = remember(uiState.transactions, period, selectedType, anchorEpochDay, baseRate) {
         buildReportData(
             records = uiState.transactions,

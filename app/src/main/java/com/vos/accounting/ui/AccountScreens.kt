@@ -70,6 +70,7 @@ fun AccountDetailScreen(
     account: AccountEntity,
     currency: CurrencyEntity,
     transactions: List<TransactionRecord>,
+    balanceTransactions: List<TransactionRecord>,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
     onEditAccount: (Long) -> Unit,
@@ -77,10 +78,11 @@ fun AccountDetailScreen(
     onAddTransaction: () -> Unit,
 ) {
     val accountTransactions = transactions.filter { it.accountId == account.id }
-    val income = accountTransactions
+    val accountBalanceTransactions = balanceTransactions.filter { it.accountId == account.id }
+    val income = accountBalanceTransactions
         .filter { it.type == TransactionType.INCOME }
         .sumOf(TransactionRecord::amountMinor)
-    val expense = accountTransactions
+    val expense = accountBalanceTransactions
         .filter { it.type == TransactionType.EXPENSE }
         .sumOf(TransactionRecord::amountMinor)
     val balance = account.openingBalanceMinor + income - expense

@@ -26,6 +26,7 @@ class AccountingRepository(
     val currencies = dao.observeCurrencies()
     val categories = dao.observeCategories()
     val transactions = dao.observeTransactions()
+    val allTransactions = dao.observeAllTransactions()
     val overviewTotals = dao.observeOverviewTotals()
     val expenseCategoryTotals = dao.observeExpenseCategoryTotals()
     val settings = dao.observeSettings()
@@ -180,26 +181,42 @@ class AccountingRepository(
     suspend fun updateLedger(ledger: LedgerEntity) {
         if (ledger.name.trim().isEmpty()) throw AccountingWriteException("账本名称不能为空")
         if (dao.findCurrency(ledger.baseCurrencyKey) == null) throw AccountingWriteException("请选择本位币")
-        if (dao.updateLedger(ledger.copy(name = ledger.name.trim())) == 0) {
-            throw AccountingWriteException("账本不存在")
+        when (dao.updateLedgerSafely(ledger.copy(name = ledger.name.trim()))) {
+            LedgerMutationResult.SUCCESS -> Unit
+            LedgerMutationResult.CURRENT_LEDGER ->
+                throw AccountingWriteException("当前账本不能隐藏，请先切换到其他账本")
+            LedgerMutationResult.NOT_FOUND -> throw AccountingWriteException("账本不存在")
+            LedgerMutationResult.SETTINGS_MISSING -> throw AccountingWriteException("当前账本设置不存在，请重试")
+            else -> throw AccountingWriteException("账本更新失败")
         }
     }
 
     /** 切换三个主分页共同使用的当前账本。 */
     suspend fun selectLedger(ledgerId: Long) {
-        val ledger = dao.findLedger(ledgerId) ?: throw AccountingWriteException("账本不存在")
-        if (ledger.isHidden) throw AccountingWriteException("请先取消隐藏该账本")
-        dao.updateCurrentLedger(ledgerId)
+        when (dao.selectLedgerSafely(ledgerId)) {
+            LedgerMutationResult.SUCCESS -> Unit
+            LedgerMutationResult.NOT_FOUND -> throw AccountingWriteException("账本不存在")
+            LedgerMutationResult.HIDDEN_LEDGER -> throw AccountingWriteException("请先取消隐藏该账本")
+            LedgerMutationResult.SETTINGS_MISSING -> throw AccountingWriteException("当前账本设置不存在，请重试")
+            else -> throw AccountingWriteException("账本切换失败")
+        }
     }
 
-    /** 删除空的非当前账本。 */
+    /** 删除无明细且无账户关联的非当前账本。 */
     suspend fun deleteLedger(ledgerId: Long) {
-        val ledger = dao.findLedger(ledgerId) ?: throw AccountingWriteException("账本不存在")
-        if (ledger.id == 1L) throw AccountingWriteException("默认账本不能删除")
-        if (dao.observeLedgers().first().firstOrNull { it.id == ledgerId }?.transactionCount != 0) {
-            throw AccountingWriteException("账本中已有明细，不能删除")
+        when (dao.deleteLedgerSafely(ledgerId)) {
+            LedgerMutationResult.SUCCESS -> Unit
+            LedgerMutationResult.NOT_FOUND -> throw AccountingWriteException("账本不存在")
+            LedgerMutationResult.CURRENT_LEDGER ->
+                throw AccountingWriteException("当前账本不能删除，请先切换到其他账本")
+            LedgerMutationResult.DEFAULT_LEDGER -> throw AccountingWriteException("默认账本不能删除")
+            LedgerMutationResult.HAS_TRANSACTIONS ->
+                throw AccountingWriteException("账本中已有明细，不能删除")
+            LedgerMutationResult.HAS_ACCOUNT_LINKS ->
+                throw AccountingWriteException("账本仍有关联账户，请先移除关联后再删除")
+            LedgerMutationResult.SETTINGS_MISSING -> throw AccountingWriteException("当前账本设置不存在，请重试")
+            else -> throw AccountingWriteException("账本删除失败")
         }
-        if (dao.deleteLedger(ledgerId) == 0) throw AccountingWriteException("账本删除失败")
     }
 
     /**
@@ -265,16 +282,15 @@ class AccountingRepository(
         }
     }
 
-    /** 删除未被账户使用的自定义币种。 */
+    /** 删除未被账户或账本使用的自定义币种。 */
     suspend fun deleteCurrency(currencyKey: String) {
-        val currency = dao.findCurrency(currencyKey)
-            ?: throw AccountingWriteException("币种不存在")
-        if (currency.isBuiltin) throw AccountingWriteException("预置币种不能删除")
-        if (dao.countAccountsByCurrencyKey(currencyKey) > 0) {
-            throw AccountingWriteException("该币种正在被账户使用")
-        }
-        if (dao.deleteCustomCurrency(currencyKey) == 0) {
-            throw AccountingWriteException("币种删除失败")
+        when (dao.deleteCustomCurrencySafely(currencyKey)) {
+            CurrencyDeleteResult.SUCCESS -> Unit
+            CurrencyDeleteResult.NOT_FOUND -> throw AccountingWriteException("币种不存在")
+            CurrencyDeleteResult.BUILTIN_CURRENCY -> throw AccountingWriteException("预置币种不能删除")
+            CurrencyDeleteResult.ACCOUNT_LINKS -> throw AccountingWriteException("该币种正在被账户使用")
+            CurrencyDeleteResult.LEDGER_LINKS -> throw AccountingWriteException("该币种正在被账本作为本位币使用")
+            CurrencyDeleteResult.DELETE_FAILED -> throw AccountingWriteException("币种删除失败")
         }
     }
 
@@ -366,6 +382,19 @@ class AccountingRepository(
         dao.archiveAccount(accountId)
     }
 
+    /** 删除没有历史账目的账户。 */
+    suspend fun deleteAccount(accountId: Long) {
+        if (dao.findAccount(accountId) == null) {
+            throw AccountingWriteException("账户不存在或已被删除")
+        }
+        if (dao.countTransactionsByAccountId(accountId) > 0) {
+            throw AccountingWriteException("账户已有历史账目，无法删除")
+        }
+        if (dao.deleteAccount(accountId) == 0) {
+            throw AccountingWriteException("账户删除失败")
+        }
+    }
+
     /**
      * 新增指定收支方向的分类。
      */
@@ -400,6 +429,10 @@ class AccountingRepository(
     ) {
         if (draft.amountMinor <= 0) throw AccountingWriteException("金额必须大于零")
         if (draft.occurredAt <= 0) throw AccountingWriteException("记账时间无效")
+        val ledgerId = original?.ledgerId ?: draft.ledgerId
+        if (dao.findLedger(ledgerId) == null) {
+            throw AccountingWriteException("所选账本不存在")
+        }
         val account = dao.findAccount(draft.accountId)
             ?: throw AccountingWriteException("所选账户不存在")
         if (account.isArchived && original?.accountId != account.id) {
@@ -412,6 +445,12 @@ class AccountingRepository(
         }
         if (category.type != draft.type) {
             throw AccountingWriteException("分类与收支类型不一致")
+        }
+        val keepsOriginalLink = original != null &&
+            original.accountId == account.id &&
+            original.ledgerId == ledgerId
+        if (!keepsOriginalLink && dao.findAccountLedgerCrossRef(account.id, ledgerId) == null) {
+            throw AccountingWriteException("所选账户不属于当前账本")
         }
     }
 }
