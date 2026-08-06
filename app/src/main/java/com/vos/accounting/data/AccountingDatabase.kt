@@ -1222,14 +1222,35 @@ interface AccountingDao {
         if (countCategories() == 0) {
             insertCategories(
                 listOf(
-                    CategoryEntity(name = "餐饮", type = TransactionType.EXPENSE, sortOrder = 0, iconKey = "store"),
-                    CategoryEntity(name = "交通", type = TransactionType.EXPENSE, sortOrder = 1, iconKey = "carrier"),
-                    CategoryEntity(name = "购物", type = TransactionType.EXPENSE, sortOrder = 2, iconKey = "bank_cards"),
-                    CategoryEntity(name = "居住", type = TransactionType.EXPENSE, sortOrder = 3, iconKey = "home"),
-                    CategoryEntity(name = "娱乐", type = TransactionType.EXPENSE, sortOrder = 4, iconKey = "music"),
-                    CategoryEntity(name = "工资", type = TransactionType.INCOME, sortOrder = 0, iconKey = "bank_cards"),
-                    CategoryEntity(name = "奖金", type = TransactionType.INCOME, sortOrder = 1, iconKey = "promotions"),
-                    CategoryEntity(name = "其他收入", type = TransactionType.INCOME, sortOrder = 2, iconKey = "more"),
+                    CategoryEntity(name = "消费", type = TransactionType.EXPENSE, sortOrder = 0, iconKey = "custom_consumption"),
+                    CategoryEntity(name = "餐饮", type = TransactionType.EXPENSE, sortOrder = 1, iconKey = "custom_dining"),
+                    CategoryEntity(name = "其他", type = TransactionType.EXPENSE, sortOrder = 2, iconKey = "custom_other"),
+                    CategoryEntity(name = "转账", type = TransactionType.EXPENSE, sortOrder = 3, iconKey = "custom_transfer"),
+                    CategoryEntity(name = "教育", type = TransactionType.EXPENSE, sortOrder = 4, iconKey = "custom_education"),
+                    CategoryEntity(name = "购物", type = TransactionType.EXPENSE, sortOrder = 5, iconKey = "custom_shopping"),
+                    CategoryEntity(name = "人情社交", type = TransactionType.EXPENSE, sortOrder = 6, iconKey = "custom_social"),
+                    CategoryEntity(name = "娱乐", type = TransactionType.EXPENSE, sortOrder = 7, iconKey = "custom_entertainment"),
+                    CategoryEntity(name = "住房", type = TransactionType.EXPENSE, sortOrder = 8, iconKey = "custom_housing"),
+                    CategoryEntity(name = "交通", type = TransactionType.EXPENSE, sortOrder = 9, iconKey = "custom_transport"),
+                    CategoryEntity(name = "红包", type = TransactionType.EXPENSE, sortOrder = 10, iconKey = "custom_red_packet"),
+                    CategoryEntity(name = "投资", type = TransactionType.EXPENSE, sortOrder = 11, iconKey = "custom_investment"),
+                    CategoryEntity(name = "通讯", type = TransactionType.EXPENSE, sortOrder = 12, iconKey = "custom_communication"),
+                    CategoryEntity(name = "医疗", type = TransactionType.EXPENSE, sortOrder = 13, iconKey = "custom_medical"),
+                    CategoryEntity(name = "旅行", type = TransactionType.EXPENSE, sortOrder = 14, iconKey = "custom_travel"),
+                    CategoryEntity(name = "借出", type = TransactionType.EXPENSE, sortOrder = 15, iconKey = "custom_lend_out"),
+                    CategoryEntity(name = "还债", type = TransactionType.EXPENSE, sortOrder = 16, iconKey = "custom_repay"),
+                    CategoryEntity(name = "美容", type = TransactionType.EXPENSE, sortOrder = 17, iconKey = "custom_beauty"),
+                    CategoryEntity(name = "亲子", type = TransactionType.EXPENSE, sortOrder = 18, iconKey = "custom_family"),
+                    CategoryEntity(name = "宠物", type = TransactionType.EXPENSE, sortOrder = 19, iconKey = "custom_pet"),
+                    CategoryEntity(name = "代付", type = TransactionType.EXPENSE, sortOrder = 20, iconKey = "custom_pay_for"),
+                    CategoryEntity(name = "转账", type = TransactionType.INCOME, sortOrder = 0, iconKey = "custom_transfer"),
+                    CategoryEntity(name = "退款", type = TransactionType.INCOME, sortOrder = 1, iconKey = "custom_refund"),
+                    CategoryEntity(name = "红包", type = TransactionType.INCOME, sortOrder = 2, iconKey = "custom_red_packet"),
+                    CategoryEntity(name = "薪资", type = TransactionType.INCOME, sortOrder = 3, iconKey = "custom_salary"),
+                    CategoryEntity(name = "理财", type = TransactionType.INCOME, sortOrder = 4, iconKey = "custom_wealth"),
+                    CategoryEntity(name = "借入", type = TransactionType.INCOME, sortOrder = 5, iconKey = "custom_borrow_in"),
+                    CategoryEntity(name = "收债", type = TransactionType.INCOME, sortOrder = 6, iconKey = "custom_collect"),
+                    CategoryEntity(name = "其他", type = TransactionType.INCOME, sortOrder = 7, iconKey = "custom_other"),
                 ),
             )
         }
@@ -1250,7 +1271,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 13,
+    version = 15,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1280,6 +1301,8 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_10_11,
             MIGRATION_11_12,
             MIGRATION_12_13,
+            MIGRATION_13_14,
+            MIGRATION_14_15,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1783,6 +1806,114 @@ abstract class AccountingDatabase : RoomDatabase() {
                 )
                 connection.executeMigrationSql(
                     "CREATE INDEX IF NOT EXISTS `index_transactions_ledger_id_occurred_at_id` ON `transactions` (`ledger_id`, `occurred_at`, `id`)",
+                )
+            }
+        }
+
+        internal val MIGRATION_13_14 = object : Migration(13, 14) {
+            /**
+             * 补全与界面一致的支出分类并把"居住"重命名为"住房"。
+             */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "UPDATE categories SET name = '住房', icon_key = 'home' WHERE name = '居住' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET sort_order = 1 WHERE name = '餐饮' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET sort_order = 5 WHERE name = '购物' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET sort_order = 7 WHERE name = '娱乐' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET sort_order = 8 WHERE name = '住房' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET sort_order = 9 WHERE name = '交通' AND type = 'EXPENSE'",
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT OR IGNORE INTO categories (name, type, sort_order, icon_key, is_archived) VALUES
+                        ('消费', 'EXPENSE', 0, 'store', 0),
+                        ('其他', 'EXPENSE', 2, 'more', 0),
+                        ('转账', 'EXPENSE', 3, 'bank_cards', 0),
+                        ('教育', 'EXPENSE', 4, 'promotions', 0),
+                        ('人情社交', 'EXPENSE', 6, 'community', 0),
+                        ('红包', 'EXPENSE', 10, 'favorites_fill', 0),
+                        ('投资', 'EXPENSE', 11, 'promotions', 0),
+                        ('通讯', 'EXPENSE', 12, 'phone', 0),
+                        ('医疗', 'EXPENSE', 13, 'favorites_fill', 0),
+                        ('旅行', 'EXPENSE', 14, 'map_album', 0),
+                        ('借出', 'EXPENSE', 15, 'send', 0),
+                        ('还债', 'EXPENSE', 16, 'import', 0),
+                        ('美容', 'EXPENSE', 17, 'favorites', 0),
+                        ('亲子', 'EXPENSE', 18, 'favorites_fill', 0),
+                        ('宠物', 'EXPENSE', 19, 'favorites', 0),
+                        ('代付', 'EXPENSE', 20, 'favorites_fill', 0)
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        internal val MIGRATION_14_15 = object : Migration(14, 15) {
+            /**
+             * 补全收入分类并把默认分类图标切换到统一的自定义图标。
+             */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "UPDATE categories SET name = '薪资', icon_key = 'custom_salary', sort_order = 3 WHERE name = '工资' AND type = 'INCOME'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET name = '其他', icon_key = 'custom_other', sort_order = 7 WHERE name = '其他收入' AND type = 'INCOME'",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE categories SET is_archived = 1 WHERE name = '奖金' AND type = 'INCOME'",
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT OR IGNORE INTO categories (name, type, sort_order, icon_key, is_archived) VALUES
+                        ('转账', 'INCOME', 0, 'custom_transfer', 0),
+                        ('退款', 'INCOME', 1, 'custom_refund', 0),
+                        ('红包', 'INCOME', 2, 'custom_red_packet', 0),
+                        ('理财', 'INCOME', 4, 'custom_wealth', 0),
+                        ('借入', 'INCOME', 5, 'custom_borrow_in', 0),
+                        ('收债', 'INCOME', 6, 'custom_collect', 0)
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    UPDATE categories SET icon_key = CASE name
+                        WHEN '消费' THEN 'custom_consumption'
+                        WHEN '餐饮' THEN 'custom_dining'
+                        WHEN '其他' THEN 'custom_other'
+                        WHEN '转账' THEN 'custom_transfer'
+                        WHEN '教育' THEN 'custom_education'
+                        WHEN '购物' THEN 'custom_shopping'
+                        WHEN '人情社交' THEN 'custom_social'
+                        WHEN '娱乐' THEN 'custom_entertainment'
+                        WHEN '住房' THEN 'custom_housing'
+                        WHEN '交通' THEN 'custom_transport'
+                        WHEN '红包' THEN 'custom_red_packet'
+                        WHEN '投资' THEN 'custom_investment'
+                        WHEN '通讯' THEN 'custom_communication'
+                        WHEN '医疗' THEN 'custom_medical'
+                        WHEN '旅行' THEN 'custom_travel'
+                        WHEN '借出' THEN 'custom_lend_out'
+                        WHEN '还债' THEN 'custom_repay'
+                        WHEN '美容' THEN 'custom_beauty'
+                        WHEN '亲子' THEN 'custom_family'
+                        WHEN '宠物' THEN 'custom_pet'
+                        WHEN '代付' THEN 'custom_pay_for'
+                        WHEN '退款' THEN 'custom_refund'
+                        WHEN '薪资' THEN 'custom_salary'
+                        WHEN '理财' THEN 'custom_wealth'
+                        WHEN '借入' THEN 'custom_borrow_in'
+                        WHEN '收债' THEN 'custom_collect'
+                        ELSE icon_key
+                    END
+                    """.trimIndent(),
                 )
             }
         }

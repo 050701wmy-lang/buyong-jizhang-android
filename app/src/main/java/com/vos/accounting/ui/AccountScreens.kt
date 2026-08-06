@@ -401,18 +401,24 @@ private fun AccountTransactionRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            val iconOption = if (isTransfer) {
+                null
+            } else {
+                categoryIconOption(record.categoryIconKey, record.categoryName)
+            }
             Icon(
                 imageVector = if (isTransfer) {
                     MiuixIcons.Basic.ArrowUpDown
                 } else {
-                    accountingCategoryIcon(
-                        iconKey = record.categoryIconKey,
-                        fallbackName = record.categoryName,
-                    )
+                    iconOption!!.icon
                 },
                 contentDescription = null,
                 modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-                tint = MiuixTheme.colorScheme.primary,
+                tint = if (iconOption?.colorful == true) {
+                    Color.Unspecified
+                } else {
+                    MiuixTheme.colorScheme.primary
+                },
             )
         }
         Column(

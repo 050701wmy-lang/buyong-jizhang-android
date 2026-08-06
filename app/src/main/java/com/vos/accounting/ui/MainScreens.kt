@@ -1157,14 +1157,16 @@ private fun DetailsTransactionRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            val iconOption = categoryIconOption(record.categoryIconKey, record.categoryName)
             Icon(
-                imageVector = accountingCategoryIcon(
-                    iconKey = record.categoryIconKey,
-                    fallbackName = record.categoryName,
-                ),
+                imageVector = iconOption.icon,
                 contentDescription = null,
                 modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-                tint = MiuixTheme.colorScheme.primary.copy(alpha = 0.72f),
+                tint = if (iconOption.colorful) {
+                    Color.Unspecified
+                } else {
+                    MiuixTheme.colorScheme.primary.copy(alpha = 0.72f)
+                },
             )
         }
         Column(
@@ -1245,7 +1247,6 @@ fun SettingsScreen(
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
     onOpenBackup: () -> Unit,
-    onOpenCategoryManage: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
     onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
@@ -1339,22 +1340,6 @@ fun SettingsScreen(
                             )
                         },
                         onClick = onOpenBackup,
-                    )
-                    BasicComponent(
-                        title = "分类管理",
-                        summary = "编辑分类名称、图标或停用分类",
-                        modifier = Modifier.fillMaxWidth(),
-                        endActions = {
-                            Icon(
-                                imageVector = MiuixIcons.Basic.ArrowRight,
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .padding(start = 6.dp)
-                                    .size(width = 10.dp, height = 16.dp),
-                                tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
-                            )
-                        },
-                        onClick = onOpenCategoryManage,
                     )
                 }
             }

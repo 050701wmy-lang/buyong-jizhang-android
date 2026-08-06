@@ -26,6 +26,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -216,6 +218,7 @@ fun ManualEntryScreen(
             keypadVisible = keypadVisible,
             onSelectType = { type = it },
             onSelectCategory = { categoryId = it },
+            onAddCategory = { showCategoryDialog = true },
             onNoteChange = { note = it },
             onMerchantChange = { merchant = it },
             onOccurredAtChange = { occurredAt = it },
@@ -290,6 +293,7 @@ private fun ManualEntryContent(
     keypadVisible: Boolean,
     onSelectType: (TransactionType) -> Unit,
     onSelectCategory: (Long) -> Unit,
+    onAddCategory: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onMerchantChange: (TextFieldValue) -> Unit,
     onOccurredAtChange: (Long) -> Unit,
@@ -348,6 +352,10 @@ private fun ManualEntryContent(
                 onSelect = {
                     onHideKeypad()
                     onSelectCategory(it)
+                },
+                onAdd = {
+                    onHideKeypad()
+                    onAddCategory()
                 },
             )
             ManualDetailRows(
@@ -518,35 +526,53 @@ private fun ManualAmountDisplay(
 }
 
 /**
- * 按每行五项展示当前收支类型的真实分类图标。
+ * 按每页五行两列分页展示当前收支类型的真实分类，并在末尾追加"添加"入口。
  */
 @Composable
 private fun ManualCategoryGrid(
     categories: List<CategoryEntity>,
     selectedId: Long,
     onSelect: (Long) -> Unit,
+    onAdd: () -> Unit,
 ) {
+    val itemsPerPage = 10
+    val totalCount = categories.size + 1
+    val pageCount = maxOf(1, (totalCount + itemsPerPage - 1) / itemsPerPage)
+    val pagerState = rememberPagerState { pageCount }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        repeat((categories.size + 4) / 5) { rowIndex ->
-            Row(modifier = Modifier.fillMaxWidth()) {
-                repeat(5) { columnIndex ->
-                    val itemIndex = rowIndex * 5 + columnIndex
-                    when {
-                        itemIndex < categories.size -> {
-                            val category = categories[itemIndex]
-                            ManualCategoryItem(
-                                modifier = Modifier.weight(1f),
-                                category = category,
-                                selected = selectedId == category.id,
-                                onClick = { onSelect(category.id) },
-                            )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth(),
+        ) { pageIndex ->
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                repeat(2) { rowIndex ->
+                    Row(modifier = Modifier.fillMaxWidth()) {
+                        repeat(5) { columnIndex ->
+                            val itemIndex = pageIndex * itemsPerPage + rowIndex * 5 + columnIndex
+                            when {
+                                itemIndex < categories.size -> {
+                                    val category = categories[itemIndex]
+                                    ManualCategoryItem(
+                                        modifier = Modifier.weight(1f),
+                                        category = category,
+                                        selected = selectedId == category.id,
+                                        onClick = { onSelect(category.id) },
+                                    )
+                                }
+                                itemIndex == categories.size -> {
+                                    ManualCategoryAddItem(
+                                        modifier = Modifier.weight(1f),
+                                        onClick = onAdd,
+                                    )
+                                }
+                                else -> Spacer(modifier = Modifier.weight(1f))
+                            }
                         }
-                        else -> Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -557,13 +583,13 @@ private fun ManualCategoryGrid(
                 .padding(top = 2.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            repeat(3) { index ->
+            repeat(pageCount) { index ->
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
                         .size(6.dp)
                         .squircleBackground(
-                            color = if (index == 0) {
+                            color = if (index == pagerState.currentPage) {
                                 MiuixTheme.colorScheme.onSurfaceVariantSummary
                             } else {
                                 MiuixTheme.colorScheme.surfaceContainerHigh
@@ -586,6 +612,7 @@ private fun ManualCategoryItem(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val iconOption = categoryIconOption(category.iconKey, category.name)
     Column(
         modifier = modifier.clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -595,14 +622,18 @@ private fun ManualCategoryItem(
                 .size(46.dp)
                 .squircleBackground(
                     color = if (selected) {
-                        MiuixTheme.colorScheme.primary
+                        if (iconOption.colorful) {
+                            MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        } else {
+                            MiuixTheme.colorScheme.primary
+                        }
                     } else {
                         MiuixTheme.colorScheme.surfaceContainerHigh
                     },
                     cornerRadius = 13.dp,
                 )
                 .then(
-                    if (selected) {
+                    if (selected && !iconOption.colorful) {
                         Modifier
                     } else {
                         Modifier
@@ -616,13 +647,16 @@ private fun ManualCategoryItem(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = accountingCategoryIcon(
-                    iconKey = category.iconKey,
-                    fallbackName = category.name,
-                ),
+                imageVector = iconOption.icon,
                 contentDescription = null,
                 modifier = Modifier.size(26.dp),
-                tint = if (selected) Color.White else MiuixTheme.colorScheme.primary.copy(alpha = 0.58f),
+                tint = if (iconOption.colorful) {
+                    Color.Unspecified
+                } else if (selected) {
+                    Color.White
+                } else {
+                    MiuixTheme.colorScheme.primary.copy(alpha = 0.58f)
+                },
             )
         }
         Text(
@@ -642,36 +676,44 @@ private fun ManualCategoryItem(
 }
 
 /**
- * 展示分类宫格末尾的添加入口。
+ * 展示分类宫格末尾的"添加"图标入口，与分类项同尺寸。
  */
 @Composable
 private fun ManualCategoryAddItem(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    Row(
-        modifier = modifier
-            .padding(horizontal = 4.dp)
-            .height(46.dp)
-            .squircleBackground(
-                color = MiuixTheme.colorScheme.surfaceContainer,
-                cornerRadius = 23.dp,
-            )
-            .squircleClip(23.dp)
-            .clickable(onClick = onClick),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
+        modifier = modifier.clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(
-            imageVector = MiuixIcons.Add,
-            contentDescription = "添加分类",
-            modifier = Modifier.size(18.dp),
-            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
+        Box(
+            modifier = Modifier
+                .size(46.dp)
+                .squircleBackground(
+                    color = MiuixTheme.colorScheme.surfaceContainerHigh,
+                    cornerRadius = 13.dp,
+                )
+                .padding(1.dp)
+                .squircleBackground(
+                    color = MiuixTheme.colorScheme.surface,
+                    cornerRadius = 12.dp,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = MiuixIcons.Add,
+                contentDescription = "添加分类",
+                modifier = Modifier.size(26.dp),
+                tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+        }
         Text(
             text = "添加",
-            modifier = Modifier.padding(start = 5.dp),
+            modifier = Modifier.padding(top = 6.dp),
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             style = MiuixTheme.textStyles.footnote1,
         )
     }
@@ -1256,12 +1298,17 @@ private fun CategoryEditorDialog(
                     horizontalArrangement = Arrangement.SpaceAround,
                 ) {
                     rowIcons.forEach { option ->
+                        val selected = option.key == iconKey
                         Box(
                             modifier = Modifier
                                 .size(50.dp)
                                 .squircleBackground(
-                                    color = if (option.key == iconKey) {
-                                        MiuixTheme.colorScheme.primary
+                                    color = if (selected) {
+                                        if (option.colorful) {
+                                            MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                        } else {
+                                            MiuixTheme.colorScheme.primary
+                                        }
                                     } else {
                                         MiuixTheme.colorScheme.secondaryContainer
                                     },
@@ -1275,10 +1322,10 @@ private fun CategoryEditorDialog(
                                 imageVector = option.icon,
                                 contentDescription = null,
                                 modifier = Modifier.size(28.dp),
-                                tint = if (option.key == iconKey) {
-                                    Color.White
-                                } else {
-                                    MiuixTheme.colorScheme.primary
+                                tint = when {
+                                    option.colorful -> Color.Unspecified
+                                    selected -> Color.White
+                                    else -> MiuixTheme.colorScheme.primary
                                 },
                             )
                         }
