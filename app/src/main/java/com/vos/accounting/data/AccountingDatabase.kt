@@ -384,6 +384,36 @@ data class TransactionRecord(
 /**
  * 定义账户、分类和账目的本地数据库操作。
  */
+
+/** 账目查询公共列与连表，供按账本与全量查询复用。 */
+private const val TRANSACTION_SELECT =
+    """
+        SELECT
+            transactions.id AS id,
+            transactions.type AS type,
+            transactions.amount_minor AS amount_minor,
+            transactions.base_amount_minor AS base_amount_minor,
+            transactions.account_id AS account_id,
+            transactions.category_id AS category_id,
+            transactions.merchant AS merchant,
+            transactions.note AS note,
+            transactions.occurred_at AS occurred_at,
+            transactions.source AS source,
+            transactions.ledger_id AS ledger_id,
+            accounts.name AS account_name,
+            COALESCE(categories.name, '币种兑换') AS category_name,
+            COALESCE(categories.icon_key, '') AS category_icon_key,
+            transactions.currency_key AS currency_key,
+            currencies.symbol AS currency_symbol,
+            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transactions.exchange_id AS exchange_id,
+            transactions.transfer_direction AS transfer_direction
+        FROM transactions
+        INNER JOIN accounts ON accounts.id = transactions.account_id
+        LEFT JOIN categories ON categories.id = transactions.category_id
+        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
+    """
+
 @Dao
 interface AccountingDao {
     /**
@@ -421,70 +451,13 @@ interface AccountingDao {
     /**
      * 持续观察按时间倒序排列的账目。
      */
-    @Query(
-        """
-        SELECT
-            transactions.id AS id,
-            transactions.type AS type,
-            transactions.amount_minor AS amount_minor,
-            transactions.base_amount_minor AS base_amount_minor,
-            transactions.account_id AS account_id,
-            transactions.category_id AS category_id,
-            transactions.merchant AS merchant,
-            transactions.note AS note,
-            transactions.occurred_at AS occurred_at,
-            transactions.source AS source,
-            transactions.ledger_id AS ledger_id,
-            accounts.name AS account_name,
-            COALESCE(categories.name, '币种兑换') AS category_name,
-            COALESCE(categories.icon_key, '') AS category_icon_key,
-            transactions.currency_key AS currency_key,
-            currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
-            transactions.exchange_id AS exchange_id,
-            transactions.transfer_direction AS transfer_direction
-        FROM transactions
-        INNER JOIN accounts ON accounts.id = transactions.account_id
-        LEFT JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
-        WHERE transactions.ledger_id = :ledgerId
-        ORDER BY occurred_at DESC, transactions.id DESC
-        """,
-    )
+    @Query(TRANSACTION_SELECT + " WHERE transactions.ledger_id = :ledgerId\n        ORDER BY occurred_at DESC, transactions.id DESC")
     fun observeTransactions(ledgerId: Long): Flow<List<TransactionRecord>>
 
     /**
      * 持续观察跨全部账本的账目，用于计算账户全局资产。
      */
-    @Query(
-        """
-        SELECT
-            transactions.id AS id,
-            transactions.type AS type,
-            transactions.amount_minor AS amount_minor,
-            transactions.base_amount_minor AS base_amount_minor,
-            transactions.account_id AS account_id,
-            transactions.category_id AS category_id,
-            transactions.merchant AS merchant,
-            transactions.note AS note,
-            transactions.occurred_at AS occurred_at,
-            transactions.source AS source,
-            transactions.ledger_id AS ledger_id,
-            accounts.name AS account_name,
-            COALESCE(categories.name, '币种兑换') AS category_name,
-            COALESCE(categories.icon_key, '') AS category_icon_key,
-            transactions.currency_key AS currency_key,
-            currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
-            transactions.exchange_id AS exchange_id,
-            transactions.transfer_direction AS transfer_direction
-        FROM transactions
-        INNER JOIN accounts ON accounts.id = transactions.account_id
-        LEFT JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
-        ORDER BY occurred_at DESC, transactions.id DESC
-        """,
-    )
+    @Query(TRANSACTION_SELECT + "\n        ORDER BY occurred_at DESC, transactions.id DESC")
     fun observeAllTransactions(): Flow<List<TransactionRecord>>
 
     /**

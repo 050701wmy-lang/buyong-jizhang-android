@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,12 +26,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,11 +48,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
-import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.vos.accounting.data.LEDGER_COVER_FILE_PREFIX
+import com.vos.accounting.data.LEDGER_COVER_URI_PREFIX
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
 import com.vos.accounting.data.LedgerRecord
@@ -63,21 +60,15 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
-
-const val CUSTOM_LEDGER_COVER_PREFIX = "cover_uri:"
-const val CROPPED_LEDGER_COVER_PREFIX = "cover_file:"
 
 /** 定义内置账本封面的标识与明暗倾向。 */
 data class LedgerCoverOption(
@@ -100,14 +91,14 @@ fun LedgerCover(
     coverKey: String,
     modifier: Modifier = Modifier,
 ) {
-    if (coverKey.startsWith(CUSTOM_LEDGER_COVER_PREFIX) || coverKey.startsWith(CROPPED_LEDGER_COVER_PREFIX)) {
+    if (coverKey.startsWith(LEDGER_COVER_URI_PREFIX) || coverKey.startsWith(LEDGER_COVER_FILE_PREFIX)) {
         val context = LocalContext.current
         val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, coverKey) {
             value = runCatching {
-                if (coverKey.startsWith(CROPPED_LEDGER_COVER_PREFIX)) {
-                    File(coverKey.removePrefix(CROPPED_LEDGER_COVER_PREFIX)).inputStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+                if (coverKey.startsWith(LEDGER_COVER_FILE_PREFIX)) {
+                    File(coverKey.removePrefix(LEDGER_COVER_FILE_PREFIX)).inputStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
                 } else {
-                    context.contentResolver.openInputStream(android.net.Uri.parse(coverKey.removePrefix(CUSTOM_LEDGER_COVER_PREFIX)))?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
+                    context.contentResolver.openInputStream(android.net.Uri.parse(coverKey.removePrefix(LEDGER_COVER_URI_PREFIX)))?.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
                 }
             }.getOrNull()
         }
@@ -126,15 +117,15 @@ fun ledgerCoverTextColor(coverKey: String): Color {
         "cover_mint", "cover_sky" -> Color(0xFF20242A)
         else -> Color.White
     }
-    if (!coverKey.startsWith(CUSTOM_LEDGER_COVER_PREFIX) && !coverKey.startsWith(CROPPED_LEDGER_COVER_PREFIX)) return defaultColor
+    if (!coverKey.startsWith(LEDGER_COVER_URI_PREFIX) && !coverKey.startsWith(LEDGER_COVER_FILE_PREFIX)) return defaultColor
     val context = LocalContext.current
     return produceState(defaultColor, coverKey) {
         value = runCatching {
-            val stream = if (coverKey.startsWith(CROPPED_LEDGER_COVER_PREFIX)) {
-                File(coverKey.removePrefix(CROPPED_LEDGER_COVER_PREFIX)).inputStream()
+            val stream = if (coverKey.startsWith(LEDGER_COVER_FILE_PREFIX)) {
+                File(coverKey.removePrefix(LEDGER_COVER_FILE_PREFIX)).inputStream()
             } else {
                 context.contentResolver.openInputStream(
-                    android.net.Uri.parse(coverKey.removePrefix(CUSTOM_LEDGER_COVER_PREFIX)),
+                    android.net.Uri.parse(coverKey.removePrefix(LEDGER_COVER_URI_PREFIX)),
                 )
             }
             stream?.use { input ->
@@ -182,7 +173,7 @@ fun LedgerScreen(
         title = "选择账本",
         backdrop = backdrop,
         onBack = onBack,
-        actions = { LedgerAddAction(onAdd) },
+        actions = { TopBarIconAction(MiuixIcons.Add, "添加账本", onAdd) },
     ) { innerPadding ->
         val visible = ledgers.filterNot(LedgerRecord::isHidden)
         val hidden = ledgers.filter(LedgerRecord::isHidden)
@@ -193,7 +184,7 @@ fun LedgerScreen(
             item { Spacer(Modifier.height(12.dp)) }
             item { LedgerGrid(visible, currentLedgerId, onEdit, onSelect) }
             if (hidden.isNotEmpty()) {
-                item { LedgerSectionTitle("隐藏账本") }
+                item { AccountSectionTitle("隐藏账本", modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp)) }
                 item { LedgerGrid(hidden, currentLedgerId, onEdit, onSelect) }
             }
             item { Spacer(Modifier.height(24.dp).navigationBarsPadding()) }
@@ -252,20 +243,6 @@ private fun LedgerCard(
     }
 }
 
-/** 显示账本页分区标题。 */
-@Composable
-private fun LedgerSectionTitle(text: String) {
-    Text(text, Modifier.padding(start = 20.dp, top = 20.dp, bottom = 8.dp), color = MiuixTheme.colorScheme.primary)
-}
-
-/** 显示账本页右上角新增操作。 */
-@Composable
-private fun RowScope.LedgerAddAction(onClick: () -> Unit) {
-    IconButton(onClick, backgroundColor = Color.Transparent, minWidth = TOP_BAR_ACTION_BUTTON_SIZE, minHeight = TOP_BAR_ACTION_BUTTON_SIZE) {
-        Icon(MiuixIcons.Add, "添加账本", Modifier.size(TOP_BAR_ACTION_ICON_SIZE))
-    }
-}
-
 /** 添加或编辑账本名称、封面、本位币和隐藏状态。 */
 @Composable
 fun LedgerEditorScreen(
@@ -293,7 +270,7 @@ fun LedgerEditorScreen(
                 context.contentResolver.takePersistableUriPermission(it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             showCovers = false
-            cropSourceKey = "$CUSTOM_LEDGER_COVER_PREFIX$it"
+            cropSourceKey = "$LEDGER_COVER_URI_PREFIX$it"
         }
     }
     val save = {
@@ -395,7 +372,7 @@ private fun LedgerCoverCropDialog(
     val sourceBitmap by produceState<Bitmap?>(null, sourceKey) {
         value = sourceKey?.let { key ->
             runCatching {
-                context.contentResolver.openInputStream(android.net.Uri.parse(key.removePrefix(CUSTOM_LEDGER_COVER_PREFIX)))?.use(BitmapFactory::decodeStream)
+                context.contentResolver.openInputStream(android.net.Uri.parse(key.removePrefix(LEDGER_COVER_URI_PREFIX)))?.use(BitmapFactory::decodeStream)
             }.getOrNull()
         }
     }
@@ -463,7 +440,7 @@ private fun LedgerCoverCropDialog(
                             val directory = File(context.filesDir, "ledger_covers").apply { mkdirs() }
                             val file = File(directory, "cover_${System.currentTimeMillis()}.jpg")
                             FileOutputStream(file).use { cropped.compress(Bitmap.CompressFormat.JPEG, 92, it) }
-                            "$CROPPED_LEDGER_COVER_PREFIX${file.absolutePath}"
+                            "$LEDGER_COVER_FILE_PREFIX${file.absolutePath}"
                         }
                         onConfirm(key)
                     }

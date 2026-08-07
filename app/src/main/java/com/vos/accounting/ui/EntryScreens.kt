@@ -53,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpSize
@@ -76,12 +75,9 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.ListPopupColumn
-import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.NumberPicker
 import top.yukonga.miuix.kmp.basic.NumberPickerDefaults
-import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
@@ -91,7 +87,6 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Add
@@ -108,7 +103,6 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.window.WindowDialog
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
-import top.yukonga.miuix.kmp.window.WindowListPopup
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -892,69 +886,6 @@ private fun ManualDetailRows(
 }
 
 /**
- * 展示记账附加信息中的单行文本输入。
- */
-@Composable
-private fun ManualTextInputRow(
-    icon: ImageVector,
-    title: String,
-    value: TextFieldValue,
-    placeholder: String,
-    focusManager: androidx.compose.ui.focus.FocusManager,
-    onValueChange: (TextFieldValue) -> Unit,
-    onFocusChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
-        Text(
-            text = title,
-            modifier = Modifier.padding(start = 8.dp),
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            style = MiuixTheme.textStyles.body2,
-        )
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
-                .weight(1f)
-                .padding(start = 20.dp)
-                .onFocusChanged { onFocusChange(it.isFocused) },
-            textStyle = MiuixTheme.textStyles.body2.copy(
-                color = MiuixTheme.colorScheme.onBackground,
-            ),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(
-                onDone = { focusManager.clearFocus() },
-            ),
-            decorationBox = { innerTextField ->
-                Box(contentAlignment = Alignment.CenterStart) {
-                    if (value.text.isEmpty()) {
-                        Text(
-                            text = placeholder,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.45f),
-                            style = MiuixTheme.textStyles.body2,
-                        )
-                    }
-                    innerTextField()
-                }
-            },
-        )
-    }
-}
-
-/**
  * 使用 MIUIX 底部弹层分步编辑账目的本地日期与时间。
  */
 @Composable
@@ -1209,41 +1140,6 @@ private fun ManualSaveAction(
                 text = if (writeInProgress) "保存中" else "保存",
                 style = MiuixTheme.textStyles.title4,
             )
-        }
-    }
-}
-
-/**
- * 以 HyperOS 风格弹出列表展示可用账户。
- */
-@Composable
-private fun AccountPickerPopup(
-    show: Boolean,
-    accounts: List<AccountEntity>,
-    selectedId: Long,
-    onDismiss: () -> Unit,
-    onSelect: (Long) -> Unit,
-) {
-    WindowListPopup(
-        show = show,
-        popupPositionProvider = ListPopupDefaults.dropdownPositionProvider(
-            horizontalMargin = 12.dp,
-        ),
-        alignment = PopupPositionProvider.Align.End,
-        enableWindowDim = true,
-        onDismissRequest = onDismiss,
-        maxHeight = 440.dp,
-        minWidth = 288.dp,
-    ) {
-        ListPopupColumn {
-            accounts.forEach { account ->
-                PopupSelectionRow(
-                    title = account.name,
-                    summary = accountTypeTitle(account.type),
-                    selected = account.id == selectedId,
-                    onClick = { onSelect(account.id) },
-                )
-            }
         }
     }
 }
@@ -1712,7 +1608,7 @@ fun AccountEditorScreen(
                         }
                     }
                     item {
-                        AccountEditorSectionTitle(text = "账户设置")
+                        AccountSectionTitle("账户设置", modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp), fontWeight = FontWeight.Medium)
                     }
                     item {
                         Card(
@@ -1856,20 +1752,6 @@ private fun AccountEditorTopBar(
             )
         }
     }
-}
-
-/**
- * 展示账户编辑页的蓝色分区标题。
- */
-@Composable
-private fun AccountEditorSectionTitle(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
-        color = MiuixTheme.colorScheme.primary,
-        fontWeight = FontWeight.Medium,
-        style = MiuixTheme.textStyles.body2,
-    )
 }
 
 /**
@@ -2134,13 +2016,13 @@ private fun ManualKeypad(
             .navigationBarsPadding()
             .padding(bottom = 10.dp),
     ) {
-        ManualKeypadRow {
+        Row(Modifier.fillMaxWidth()) {
             ManualKeypadButton("1", Modifier.weight(1f)) { onAmountKey("1") }
             ManualKeypadButton("2", Modifier.weight(1f)) { onAmountKey("2") }
             ManualKeypadButton("3", Modifier.weight(1f)) { onAmountKey("3") }
-            ManualKeypadDeleteButton(Modifier.weight(1f), onDelete)
+            ManualKeypadButton(text = "⌫", modifier = Modifier.weight(1f), backgroundColor = MiuixTheme.colorScheme.secondaryContainer, textSize = 24.sp, onClick = onDelete)
         }
-        ManualKeypadRow {
+        Row(Modifier.fillMaxWidth()) {
             ManualKeypadButton("4", Modifier.weight(1f)) { onAmountKey("4") }
             ManualKeypadButton("5", Modifier.weight(1f)) { onAmountKey("5") }
             ManualKeypadButton("6", Modifier.weight(1f)) { onAmountKey("6") }
@@ -2152,7 +2034,7 @@ private fun ManualKeypad(
                 onAmountKey("+")
             }
         }
-        ManualKeypadRow {
+        Row(Modifier.fillMaxWidth()) {
             ManualKeypadButton("7", Modifier.weight(1f)) { onAmountKey("7") }
             ManualKeypadButton("8", Modifier.weight(1f)) { onAmountKey("8") }
             ManualKeypadButton("9", Modifier.weight(1f)) { onAmountKey("9") }
@@ -2164,7 +2046,7 @@ private fun ManualKeypad(
                 onAmountKey("−")
             }
         }
-        ManualKeypadRow {
+        Row(Modifier.fillMaxWidth()) {
             ManualKeypadButton(".", Modifier.weight(1f)) { onAmountKey(".") }
             ManualKeypadButton("0", Modifier.weight(1f)) { onAmountKey("0") }
             ManualKeypadButton(
@@ -2184,17 +2066,6 @@ private fun ManualKeypad(
             )
         }
     }
-}
-
-/**
- * 为数字键盘的一行提供统一高度。
- */
-@Composable
-private fun ManualKeypadRow(content: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        content = content,
-    )
 }
 
 /**
@@ -2236,33 +2107,6 @@ private fun ManualKeypadButton(
             fontWeight = if (text == "完成") FontWeight.Bold else FontWeight.Normal,
             fontSize = textSize,
             maxLines = 1,
-        )
-    }
-}
-
-/**
- * 展示数字键盘的删除按键。
- */
-@Composable
-private fun ManualKeypadDeleteButton(
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .padding(4.dp)
-            .height(54.dp)
-            .squircleBackground(
-                color = MiuixTheme.colorScheme.secondaryContainer,
-                cornerRadius = 13.dp,
-            )
-            .squircleClip(13.dp)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = "⌫",
-            fontSize = 24.sp,
         )
     }
 }
@@ -2452,20 +2296,4 @@ internal fun SecondaryList(
             }
         }
     }
-}
-
-/**
- * 展示表单输入校验错误。
- */
-@Composable
-private fun ValidationText(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp)
-            .padding(bottom = 12.dp),
-        color = MiuixTheme.colorScheme.error,
-        style = MiuixTheme.textStyles.footnote1,
-    )
 }

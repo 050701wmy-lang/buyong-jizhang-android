@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -91,9 +90,9 @@ fun CurrencyScreen(
                         }
                     },
                     actions = {
-                        AddCurrencyAction {
-                            editingCurrencyKey = null
-                            showEditor = true
+                        TopBarIconAction(MiuixIcons.Add, "新增币种") {
+        editingCurrencyKey = null
+        showEditor = true
                         }
                     },
                     scrollBehavior = scrollBehavior,
@@ -121,7 +120,7 @@ fun CurrencyScreen(
                 contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
             ) {
                 item { Spacer(modifier = Modifier.height(12.dp)) }
-                item { CurrencySectionTitle("预置币种") }
+                item { AccountSectionTitle("预置币种") }
                 item {
                     CurrencyCard(
                         currencies.filter(CurrencyEntity::isBuiltin),
@@ -130,7 +129,7 @@ fun CurrencyScreen(
                         onLongClick = { managedCurrencyKey = it.key },
                     )
                 }
-                item { CurrencySectionTitle("自定义币种") }
+                item { AccountSectionTitle("自定义币种") }
                 if (currencies.any { !it.isBuiltin }) {
                     item {
                         CurrencyCard(
@@ -200,34 +199,6 @@ fun CurrencyScreen(
                 if (currency.key == selectedKey) onSelect("cny")
             }
         },
-    )
-}
-
-/**
- * 展示币种页右上角的新增入口。
- */
-@Composable
-private fun RowScope.AddCurrencyAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(MiuixIcons.Add, "新增币种", Modifier.size(TOP_BAR_ACTION_ICON_SIZE))
-    }
-}
-
-/**
- * 展示币种列表的小标题。
- */
-@Composable
-private fun CurrencySectionTitle(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
-        color = MiuixTheme.colorScheme.primary,
-        style = MiuixTheme.textStyles.body2,
     )
 }
 

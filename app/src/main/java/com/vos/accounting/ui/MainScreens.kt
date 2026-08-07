@@ -42,7 +42,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
@@ -63,7 +62,6 @@ import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.data.convertCurrencyMinor
-import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransferDirection
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -1459,30 +1457,6 @@ internal fun MainTabList(
 }
 
 /**
- * 展示首页收入或支出的小型汇总项。
- */
-@Composable
-private fun SummaryAmount(
-    modifier: Modifier,
-    label: String,
-    amount: Long,
-) {
-    Column(modifier = modifier) {
-        Text(
-            text = label,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            style = MiuixTheme.textStyles.footnote1,
-        )
-        Text(
-            text = formatMoney(amount),
-            modifier = Modifier.padding(top = 4.dp),
-            fontWeight = FontWeight.Medium,
-            style = MiuixTheme.textStyles.body1,
-        )
-    }
-}
-
-/**
  * 展示主列表中的分区标题。
  */
 @Composable
@@ -1494,80 +1468,6 @@ private fun SectionTitle(text: String) {
         fontWeight = FontWeight.Medium,
         style = MiuixTheme.textStyles.body2,
     )
-}
-
-/**
- * 以一个连续 Card 展示多笔账目。
- */
-@Composable
-private fun TransactionGroup(records: List<TransactionRecord>) {
-    Card(
-        modifier = Modifier
-            .padding(horizontal = 12.dp)
-            .padding(bottom = 12.dp),
-        insideMargin = PaddingValues(0.dp),
-    ) {
-        records.forEachIndexed { index, record ->
-            TransactionRow(record = record)
-            if (index < records.lastIndex) {
-                HorizontalDivider(modifier = Modifier.padding(start = 16.dp))
-            }
-        }
-    }
-}
-
-/**
- * 展示一笔账目的描述、分类、时间和金额。
- */
-@Composable
-private fun TransactionRow(record: TransactionRecord) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 13.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = record.merchant.ifBlank { record.categoryName },
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
-                if (record.source == TransactionSource.AI) {
-                    Text(
-                        text = "AI",
-                        modifier = Modifier.padding(start = 7.dp),
-                        color = MiuixTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        style = MiuixTheme.textStyles.footnote2,
-                    )
-                }
-            }
-            Text(
-                text = "${record.categoryName} · ${record.accountName} · ${formatTransactionTime(record.occurredAt)}",
-                modifier = Modifier.padding(top = 4.dp),
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                maxLines = 1,
-                style = MiuixTheme.textStyles.footnote1,
-            )
-        }
-        Text(
-            text = if (record.type == TransactionType.EXPENSE) {
-                "-${formatMoney(record.amountMinor)}"
-            } else {
-                "+${formatMoney(record.amountMinor)}"
-            },
-            modifier = Modifier.padding(start = 12.dp),
-            color = if (record.type == TransactionType.EXPENSE) {
-                MiuixTheme.colorScheme.error
-            } else {
-                MiuixTheme.colorScheme.primary
-            },
-            fontWeight = FontWeight.Medium,
-        )
-    }
 }
 
 /**

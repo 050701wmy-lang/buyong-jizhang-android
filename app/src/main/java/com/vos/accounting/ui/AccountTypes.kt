@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -88,12 +87,10 @@ fun AccountTypeScreen(
                         }
                     },
                     actions = {
-                        AddAccountTypeAction(
-                            onClick = {
-                                editingTypeKey = null
-                                showEditor = true
-                            },
-                        )
+                        TopBarIconAction(MiuixIcons.Add, "自定义账户类型") {
+                            editingTypeKey = null
+                            showEditor = true
+                        }
                     },
                     scrollBehavior = scrollBehavior,
                     actionIconPadding = TOP_BAR_ACTION_END_PADDING,
@@ -121,7 +118,7 @@ fun AccountTypeScreen(
             ) {
                 item { Spacer(modifier = Modifier.height(12.dp)) }
                 item {
-                    AccountTypeSectionTitle(text = "预置类型")
+                    AccountSectionTitle("预置类型")
                 }
                 item {
                     AccountTypeCard(
@@ -132,7 +129,7 @@ fun AccountTypeScreen(
                     )
                 }
                 item {
-                    AccountTypeSectionTitle(text = "自定义类型")
+                    AccountSectionTitle("自定义类型")
                 }
                 if (accountTypes.any { !it.isBuiltin }) {
                     item {
@@ -240,38 +237,6 @@ private fun AccountTypeManageDialog(
                 Text(text = "删除")
             }
         }
-    }
-}
-
-/**
- * 展示账户类型列表的 MIUIX 分组小标题。
- */
-@Composable
-private fun AccountTypeSectionTitle(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
-        color = MiuixTheme.colorScheme.primary,
-        style = MiuixTheme.textStyles.body2,
-    )
-}
-
-/**
- * 展示账户类型页右上角的新增入口。
- */
-@Composable
-private fun RowScope.AddAccountTypeAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(
-            imageVector = MiuixIcons.Add,
-            contentDescription = "自定义账户类型",
-            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
-        )
     }
 }
 

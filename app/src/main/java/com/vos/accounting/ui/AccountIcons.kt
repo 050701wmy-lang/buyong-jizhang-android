@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -41,6 +40,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.vos.accounting.data.ACCOUNT_ICON_CUSTOM_PREFIX
 import com.vos.accounting.R
 import com.vos.accounting.model.AccountType
 import kotlinx.coroutines.Dispatchers
@@ -61,7 +61,6 @@ import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
-private const val CUSTOM_ACCOUNT_ICON_PREFIX = "custom:"
 private const val ACCOUNT_ICON_SPRITE_CELL = 96
 
 /**
@@ -158,15 +157,6 @@ fun defaultAccountIconKey(type: AccountType): String = when (type) {
 }
 
 /**
- * 返回账户图标的显示名称。
- */
-fun accountIconTitle(iconKey: String): String = if (iconKey.startsWith(CUSTOM_ACCOUNT_ICON_PREFIX)) {
-    "自定义"
-} else {
-    accountIconsByKey[iconKey]?.title ?: "现金"
-}
-
-/**
  * 绘制本地图标或用户选择的自定义账户图标。
  */
 @Composable
@@ -174,8 +164,8 @@ fun AccountIcon(
     iconKey: String,
     modifier: Modifier = Modifier,
 ) {
-    if (iconKey.startsWith(CUSTOM_ACCOUNT_ICON_PREFIX)) {
-        CustomAccountIcon(iconKey.removePrefix(CUSTOM_ACCOUNT_ICON_PREFIX), modifier)
+    if (iconKey.startsWith(ACCOUNT_ICON_CUSTOM_PREFIX)) {
+        CustomAccountIcon(iconKey.removePrefix(ACCOUNT_ICON_CUSTOM_PREFIX), modifier)
     } else {
         BundledAccountIcon(accountIconsByKey[iconKey] ?: accountIconsByKey.getValue("cash"), modifier)
     }
@@ -254,7 +244,7 @@ fun AccountIconScreen(
                 it,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
-            onSelect("$CUSTOM_ACCOUNT_ICON_PREFIX$it")
+            onSelect("$ACCOUNT_ICON_CUSTOM_PREFIX$it")
         }
     }
     Scaffold(
@@ -270,8 +260,8 @@ fun AccountIconScreen(
                         }
                     },
                     actions = {
-                        CustomAccountIconAction {
-                            customIconLauncher.launch(arrayOf("image/*"))
+                        TopBarIconAction(MiuixIcons.Photos, "自定义账户图标") {
+    customIconLauncher.launch(arrayOf("image/*"))
                         }
                     },
                     scrollBehavior = scrollBehavior,
@@ -317,25 +307,6 @@ fun AccountIconScreen(
                 }
             }
         }
-    }
-}
-
-/**
- * 展示账户图标页右上角的自定义图片入口。
- */
-@Composable
-private fun RowScope.CustomAccountIconAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(
-            imageVector = MiuixIcons.Photos,
-            contentDescription = "自定义账户图标",
-            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
-        )
     }
 }
 

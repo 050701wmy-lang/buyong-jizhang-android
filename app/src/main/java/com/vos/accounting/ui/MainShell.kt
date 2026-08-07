@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +33,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
@@ -45,6 +47,7 @@ import top.yukonga.miuix.kmp.basic.NavigationRail
 import top.yukonga.miuix.kmp.basic.NavigationRailItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.rememberNavigationRailState
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
@@ -70,6 +73,48 @@ internal val TOP_BAR_ACTION_END_PADDING = 20.dp
 
 /** 相邻顶栏操作按钮之间的统一间距。 */
 internal val TOP_BAR_ACTION_SPACING = 5.dp
+
+/**
+ * 展示顶栏右上角统一尺寸与透明背景的操作图标按钮。
+ */
+@Composable
+internal fun TopBarIconAction(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        backgroundColor = Color.Transparent,
+        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
+        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
+        )
+    }
+}
+
+/**
+ * 展示 MIUIX 分组小标题，供各页面分区标题共用。
+ */
+@Composable
+internal fun AccountSectionTitle(
+    text: String,
+    modifier: Modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
+    color: Color = MiuixTheme.colorScheme.primary,
+    fontWeight: FontWeight = FontWeight.Normal,
+) {
+    Text(
+        text = text,
+        modifier = modifier,
+        color = color,
+        fontWeight = fontWeight,
+        style = MiuixTheme.textStyles.body2,
+    )
+}
 
 /**
  * 表示三个一级功能标签。
@@ -209,12 +254,12 @@ private fun MainScaffold(
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
                             if (selectedTab == MainTab.HOME) {
-                                MainAddAccountAction(onClick = onAddAccount)
+                                TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
-                            MainLedgerAction(onClick = onOpenLedgers)
+                            TopBarIconAction(MiuixIcons.GridView, "选择账本", onOpenLedgers)
                             Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
-                            MainSettingsAction(onClick = onOpenSettings)
+                            TopBarIconAction(MiuixIcons.Settings, "设置", onOpenSettings)
                         },
                     )
                 } else {
@@ -225,12 +270,12 @@ private fun MainScaffold(
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
                             if (selectedTab == MainTab.HOME) {
-                                MainAddAccountAction(onClick = onAddAccount)
+                                TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
-                            MainLedgerAction(onClick = onOpenLedgers)
+                            TopBarIconAction(MiuixIcons.GridView, "选择账本", onOpenLedgers)
                             Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
-                            MainSettingsAction(onClick = onOpenSettings)
+                            TopBarIconAction(MiuixIcons.Settings, "设置", onOpenSettings)
                         },
                     )
                 }
@@ -397,61 +442,6 @@ internal fun AccountingBlurTopBar(
                 .accountingBarBlur(backdrop),
         )
         content()
-    }
-}
-
-/**
- * 显示首页顶栏中位于设置左侧的新增账户入口。
- */
-@Composable
-private fun MainAddAccountAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(
-            imageVector = MiuixIcons.Add,
-            contentDescription = "新增账户",
-            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
-        )
-    }
-}
-
-/** 显示三个主分页共用的账本选择入口。 */
-@Composable
-private fun MainLedgerAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(
-            imageVector = MiuixIcons.GridView,
-            contentDescription = "选择账本",
-            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
-        )
-    }
-}
-
-/**
- * 显示主页面顶栏右侧的设置入口。
- */
-@Composable
-private fun MainSettingsAction(onClick: () -> Unit) {
-    IconButton(
-        onClick = onClick,
-        backgroundColor = Color.Transparent,
-        minWidth = TOP_BAR_ACTION_BUTTON_SIZE,
-        minHeight = TOP_BAR_ACTION_BUTTON_SIZE,
-    ) {
-        Icon(
-            imageVector = MiuixIcons.Settings,
-            contentDescription = "设置",
-            modifier = Modifier.size(TOP_BAR_ACTION_ICON_SIZE),
-        )
     }
 }
 

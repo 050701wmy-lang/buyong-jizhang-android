@@ -4,6 +4,10 @@ import android.content.Context
 import android.net.Uri
 import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountingDao
+import com.vos.accounting.data.LEDGER_COVER_URI_PREFIX
+import com.vos.accounting.data.LEDGER_COVER_FILE_PREFIX
+import com.vos.accounting.data.ACCOUNT_ICON_CUSTOM_PREFIX
+import com.vos.accounting.data.BACKUP_MEDIA_PREFIX
 import com.vos.accounting.data.LedgerEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,10 +20,6 @@ class BackupManager(
     private val context: Context,
     private val dao: AccountingDao,
 ) {
-    private val coverUriPrefix = "cover_uri:"
-    private val coverFilePrefix = "cover_file:"
-    private val customIconPrefix = "custom:"
-    private val mediaPrefix = "media://"
     private val ledgerCoverKind = "ledger_cover"
     private val accountIconKind = "account_icon"
     private val maxMediaFileBytes = 16L * 1024 * 1024
@@ -32,14 +32,14 @@ class BackupManager(
             readAccountIcon(account)?.let { (entry, bytes) ->
                 mediaBytes[entry] = bytes
                 mediaRefs += BackupMediaRef(entry, accountIconKind, account.id)
-                account.copy(iconKey = mediaPrefix + entry)
+                account.copy(iconKey = BACKUP_MEDIA_PREFIX + entry)
             } ?: account
         }
         val ledgers = dao.getAllLedgers().map { ledger ->
             readLedgerCover(ledger)?.let { (entry, bytes) ->
                 mediaBytes[entry] = bytes
                 mediaRefs += BackupMediaRef(entry, ledgerCoverKind, ledger.id)
-                ledger.copy(coverKey = mediaPrefix + entry)
+                ledger.copy(coverKey = BACKUP_MEDIA_PREFIX + entry)
             } ?: ledger
         }
         val data = BackupData(
@@ -103,12 +103,12 @@ class BackupManager(
 
     private fun readLedgerCover(ledger: LedgerEntity): Pair<String, ByteArray>? {
         val bytes = when {
-            ledger.coverKey.startsWith(coverFilePrefix) -> runCatching {
-                File(ledger.coverKey.removePrefix(coverFilePrefix)).readBytes()
+            ledger.coverKey.startsWith(LEDGER_COVER_FILE_PREFIX) -> runCatching {
+                File(ledger.coverKey.removePrefix(LEDGER_COVER_FILE_PREFIX)).readBytes()
             }.getOrNull()
-            ledger.coverKey.startsWith(coverUriPrefix) -> runCatching {
+            ledger.coverKey.startsWith(LEDGER_COVER_URI_PREFIX) -> runCatching {
                 context.contentResolver.openInputStream(
-                    Uri.parse(ledger.coverKey.removePrefix(coverUriPrefix)),
+                    Uri.parse(ledger.coverKey.removePrefix(LEDGER_COVER_URI_PREFIX)),
                 )?.use { it.readBytes() }
             }.getOrNull()
             else -> null
@@ -118,10 +118,10 @@ class BackupManager(
     }
 
     private fun readAccountIcon(account: AccountEntity): Pair<String, ByteArray>? {
-        if (!account.iconKey.startsWith(customIconPrefix)) return null
+        if (!account.iconKey.startsWith(ACCOUNT_ICON_CUSTOM_PREFIX)) return null
         return runCatching {
             context.contentResolver.openInputStream(
-                Uri.parse(account.iconKey.removePrefix(customIconPrefix)),
+                Uri.parse(account.iconKey.removePrefix(ACCOUNT_ICON_CUSTOM_PREFIX)),
             )?.use { it.readBytes() }
         }.getOrNull()?.takeIf { it.isNotEmpty() && it.size <= maxMediaFileBytes }
             ?.let { "account_icon_${account.id}.jpg" to it }
@@ -135,14 +135,14 @@ class BackupManager(
     }
 
     private fun remapLedgerCover(ledger: LedgerEntity, mediaFiles: Map<String, File>): LedgerEntity {
-        if (!ledger.coverKey.startsWith(mediaPrefix)) return ledger
-        val file = mediaFiles[ledger.coverKey.removePrefix(mediaPrefix)] ?: return ledger
-        return ledger.copy(coverKey = coverFilePrefix + file.absolutePath)
+        if (!ledger.coverKey.startsWith(BACKUP_MEDIA_PREFIX)) return ledger
+        val file = mediaFiles[ledger.coverKey.removePrefix(BACKUP_MEDIA_PREFIX)] ?: return ledger
+        return ledger.copy(coverKey = LEDGER_COVER_FILE_PREFIX + file.absolutePath)
     }
 
     private fun remapAccountIcon(account: AccountEntity, mediaFiles: Map<String, File>): AccountEntity {
-        if (!account.iconKey.startsWith(mediaPrefix)) return account
-        val file = mediaFiles[account.iconKey.removePrefix(mediaPrefix)] ?: return account
-        return account.copy(iconKey = customIconPrefix + Uri.fromFile(file).toString())
+        if (!account.iconKey.startsWith(BACKUP_MEDIA_PREFIX)) return account
+        val file = mediaFiles[account.iconKey.removePrefix(BACKUP_MEDIA_PREFIX)] ?: return account
+        return account.copy(iconKey = ACCOUNT_ICON_CUSTOM_PREFIX + Uri.fromFile(file).toString())
     }
 }
