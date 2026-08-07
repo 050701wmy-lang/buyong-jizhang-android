@@ -216,11 +216,17 @@ fun HomeScreen(
     onSelectLedger: (Long) -> Unit,
 ) {
     val activeAccounts = uiState.accounts.filterNot(AccountEntity::isArchived)
-    val accountBalances = activeAccounts.associateWith { account ->
-        calculateAccountBalance(account, uiState.allTransactions)
+    val accountBalances = remember(uiState.accounts, uiState.allTransactions) {
+        uiState.accounts.filterNot(AccountEntity::isArchived).associateWith { account ->
+            calculateAccountBalance(account, uiState.allTransactions)
+        }
     }
-    val currencies = uiState.currencies.associateBy(CurrencyEntity::key)
-    val availableLedgers = uiState.ledgers.filterNot { it.isHidden }.ifEmpty { uiState.ledgers }
+    val currencies = remember(uiState.currencies) {
+        uiState.currencies.associateBy(CurrencyEntity::key)
+    }
+    val availableLedgers = remember(uiState.ledgers) {
+        uiState.ledgers.filterNot { it.isHidden }.ifEmpty { uiState.ledgers }
+    }
     if (availableLedgers.isEmpty()) {
         MainTabList(innerPadding = innerPadding) {
             item { EmptyCard(text = "暂无账本") }
@@ -237,27 +243,31 @@ fun HomeScreen(
         }
         return
     }
-    val ledgerSummaries = availableLedgers.associate { visibleLedger ->
-        val baseCurrency = currencies.getValue(visibleLedger.baseCurrencyKey)
-        val convertedBalances = accountBalances.mapValues { (account, balance) ->
-            convertCurrencyMinor(
-                balance,
-                currencies.getValue(account.currencyKey).rateToCnyScaled,
-                baseCurrency.rateToCnyScaled,
+    val ledgerSummaries = remember(availableLedgers, accountBalances, currencies) {
+        availableLedgers.associate { visibleLedger ->
+            val baseCurrency = currencies.getValue(visibleLedger.baseCurrencyKey)
+            val convertedBalances = accountBalances.mapValues { (account, balance) ->
+                convertCurrencyMinor(
+                    balance,
+                    currencies.getValue(account.currencyKey).rateToCnyScaled,
+                    baseCurrency.rateToCnyScaled,
+                )
+            }
+            val totalAssets = convertedBalances.values.sumOf { maxOf(it, 0L) }
+            val totalLiabilities = convertedBalances.values.sumOf { -minOf(it, 0L) }
+            visibleLedger.id to LedgerAssetSummary(
+                netAssets = totalAssets - totalLiabilities,
+                totalAssets = totalAssets,
+                totalLiabilities = totalLiabilities,
+                currencySymbol = baseCurrency.symbol,
             )
         }
-        val totalAssets = convertedBalances.values.sumOf { maxOf(it, 0L) }
-        val totalLiabilities = convertedBalances.values.sumOf { -minOf(it, 0L) }
-        visibleLedger.id to LedgerAssetSummary(
-            netAssets = totalAssets - totalLiabilities,
-            totalAssets = totalAssets,
-            totalLiabilities = totalLiabilities,
-            currencySymbol = baseCurrency.symbol,
-        )
     }
     val baseCurrency = currencies.getValue(ledger.baseCurrencyKey)
-    val cnyBalances = accountBalances.mapValues { (account, balance) ->
-        convertCurrencyMinor(balance, currencies.getValue(account.currencyKey).rateToCnyScaled, baseCurrency.rateToCnyScaled)
+    val cnyBalances = remember(accountBalances, currencies, baseCurrency) {
+        accountBalances.mapValues { (account, balance) ->
+            convertCurrencyMinor(balance, currencies.getValue(account.currencyKey).rateToCnyScaled, baseCurrency.rateToCnyScaled)
+        }
     }
     var displayedLedgerId by remember { mutableStateOf(ledger.id) }
     var ledgerSelectionPending by remember { mutableStateOf(false) }
@@ -938,28 +948,42 @@ fun DetailsScreen(
     }
     val today = LocalDate.now()
     val currentMonth = YearMonth.from(today)
-    val recordsByDate = uiState.transactions
-        .filter { it.type != TransactionType.TRANSFER }
-        .groupBy(::detailsRecordDate)
-        .entries
-        .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
-    val todayExpense = uiState.transactions
-        .filter { it.type == TransactionType.EXPENSE && detailsRecordDate(it) == today }
-        .sumOf(TransactionRecord::baseAmountMinor)
-    val monthRecords = uiState.transactions.filter {
-        YearMonth.from(detailsRecordDate(it)) == currentMonth
+    val recordsByDate = remember(uiState.transactions) {
+        uiState.transactions
+            .filter { it.type != TransactionType.TRANSFER }
+            .groupBy(::detailsRecordDate)
+            .entries
+            .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
+    }
+    val (todayExpense, monthExpense, monthIncome) = remember(recordsByDate, today, currentMonth) {
+        var todayExpense = 0L
+        var monthExpense = 0L
+        var monthIncome = 0L
+        recordsByDate.forEach { (date, records) ->
+            if (date == today) {
+                records.filter { it.type == TransactionType.EXPENSE }.forEach {
+                    todayExpense += it.baseAmountMinor
+                }
+            }
+            if (YearMonth.from(date) == currentMonth) {
+                records.forEach { record ->
+                    when (record.type) {
+                        TransactionType.EXPENSE -> monthExpense += record.baseAmountMinor
+                        TransactionType.INCOME -> monthIncome += record.baseAmountMinor
+                        else -> Unit
+                    }
+                }
+            }
+        }
+        Triple(todayExpense, monthExpense, monthIncome)
     }
 
     MainTabList(innerPadding = innerPadding) {
         item {
             DetailsSummaryCard(
                 todayExpense = todayExpense,
-                monthExpense = monthRecords
-                    .filter { it.type == TransactionType.EXPENSE }
-                    .sumOf(TransactionRecord::baseAmountMinor),
-                monthIncome = monthRecords
-                    .filter { it.type == TransactionType.INCOME }
-                    .sumOf(TransactionRecord::baseAmountMinor),
+                monthExpense = monthExpense,
+                monthIncome = monthIncome,
                 ledger = ledger,
                 currencySymbol = baseCurrency.symbol,
             )

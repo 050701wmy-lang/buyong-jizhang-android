@@ -333,6 +333,7 @@ private fun MainTabPager(
         state = pagerState,
         modifier = Modifier.fillMaxSize(),
         key = { MainTab.entries[it] },
+        beyondViewportPageCount = 1,
     ) { page ->
         val tab = MainTab.entries[page]
         saveableStateHolder.SaveableStateProvider(tab) {
