@@ -5,6 +5,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNamingStrategy
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.SecureRandom
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -59,7 +61,12 @@ object BackupCodec {
             out.write(MAGIC)
             out.write(salt)
             out.write(iv)
-            writeLong(out, ciphertext.size.toLong())
+            out.write(
+                ByteBuffer.allocate(Long.SIZE_BYTES)
+                    .order(ByteOrder.LITTLE_ENDIAN)
+                    .putLong(ciphertext.size.toLong())
+                    .array(),
+            )
             out.write(ciphertext)
             out.toByteArray()
         }
@@ -74,7 +81,9 @@ object BackupCodec {
         }
         val salt = input.readNBytes(SALT_LENGTH)
         val iv = input.readNBytes(IV_LENGTH)
-        val payloadLength = readLong(input)
+        val payloadLength = ByteBuffer.wrap(input.readNBytes(Long.SIZE_BYTES))
+            .order(ByteOrder.LITTLE_ENDIAN)
+            .long
         if (payloadLength < 0 || payloadLength > MAX_PAYLOAD_BYTES) {
             throw BackupException("备份文件大小异常")
         }
@@ -135,19 +144,4 @@ object BackupCodec {
         return SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
     }
 
-    private fun writeLong(out: ByteArrayOutputStream, value: Long) {
-        var remaining = value
-        repeat(8) {
-            out.write((remaining and 0xFF).toInt())
-            remaining = remaining shr 8
-        }
-    }
-
-    private fun readLong(input: ByteArrayInputStream): Long {
-        var result = 0L
-        repeat(8) {
-            result = result or ((input.read().toLong() and 0xFF) shl (it * 8))
-        }
-        return result
-    }
 }

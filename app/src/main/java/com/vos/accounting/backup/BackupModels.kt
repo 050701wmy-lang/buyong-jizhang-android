@@ -14,8 +14,6 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class BackupMediaRef(
     val entryName: String,
-    val kind: String,
-    val targetId: Long,
 )
 
 /** 版本化的全量备份数据，覆盖全部八张持久化表与媒体引用。 */

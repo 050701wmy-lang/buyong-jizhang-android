@@ -23,7 +23,6 @@ class AccountingWriteException(message: String) : IllegalArgumentException(messa
  */
 class AccountingRepository(
     private val dao: AccountingDao,
-    private val currencyRateService: CurrencyRateService = CurrencyRateService(),
 ) {
     val accounts = dao.observeAccounts()
     val ledgers = dao.observeLedgers()
@@ -62,7 +61,7 @@ class AccountingRepository(
         }
         if (targets.isEmpty()) return
         val rates = withContext(Dispatchers.IO) {
-            currencyRateService.fetchRates(targets.map(CurrencyEntity::code).toSet())
+            fetchCurrencyRates(targets.map(CurrencyEntity::code).toSet())
         }
         val updatedAt = System.currentTimeMillis()
         rates.forEach { (code, rate) ->
@@ -124,7 +123,7 @@ class AccountingRepository(
         val original = dao.findTransaction(transactionId)
             ?: throw AccountingWriteException("账目不存在或已被删除")
         validateTransactionDraft(draft, original)
-        val snapshot = transactionSnapshot(draft, original)
+        val snapshot = transactionSnapshot(draft)
         val updated = dao.updateTransaction(
             TransactionEntity(
                 id = transactionId,
@@ -136,7 +135,7 @@ class AccountingRepository(
                 note = draft.note.trim(),
                 occurredAt = draft.occurredAt,
                 source = draft.source,
-                ledgerId = original.ledgerId,
+                ledgerId = draft.ledgerId,
                 currencyKey = snapshot.currencyKey,
                 baseAmountMinor = snapshot.baseAmountMinor,
             ),
@@ -343,7 +342,7 @@ class AccountingRepository(
         }
         if (enabled) {
             val rate = withContext(Dispatchers.IO) {
-                currencyRateService.fetchRates(setOf(currency.code))[currency.code]
+                fetchCurrencyRates(setOf(currency.code))[currency.code]
             }
             if (rate != null) {
                 dao.updateBuiltinCurrencyRate(currency.code, rate, System.currentTimeMillis())
@@ -485,11 +484,8 @@ class AccountingRepository(
     /**
      * 按写入时的账户币种与账本位币固化币种与本位币金额快照。
      */
-    private suspend fun transactionSnapshot(
-        draft: TransactionDraft,
-        original: TransactionEntity? = null,
-    ): TransactionSnapshot {
-        val ledgerId = original?.ledgerId ?: draft.ledgerId
+    private suspend fun transactionSnapshot(draft: TransactionDraft): TransactionSnapshot {
+        val ledgerId = draft.ledgerId
         val account = dao.findAccount(draft.accountId)
             ?: throw AccountingWriteException("所选账户不存在")
         val ledger = dao.findLedger(ledgerId)
@@ -526,7 +522,7 @@ class AccountingRepository(
         if (draft.amountMinor <= 0) throw AccountingWriteException("金额必须大于零")
         if (draft.amountMinor > MAX_AMOUNT_MINOR) throw AccountingWriteException("金额超出上限")
         if (draft.occurredAt <= 0) throw AccountingWriteException("记账时间无效")
-        val ledgerId = original?.ledgerId ?: draft.ledgerId
+        val ledgerId = draft.ledgerId
         if (dao.findLedger(ledgerId) == null) {
             throw AccountingWriteException("所选账本不存在")
         }

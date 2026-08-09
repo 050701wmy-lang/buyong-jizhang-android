@@ -86,7 +86,6 @@ dependencies {
     implementation(libs.androidx.navigation3.runtime)
     implementation(libs.miuix.navigation3.ui)
     implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.miuix.ui)

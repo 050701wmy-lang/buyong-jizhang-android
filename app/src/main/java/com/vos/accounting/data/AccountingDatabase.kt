@@ -668,10 +668,6 @@ interface AccountingDao {
     )
     suspend fun findAccountLedgerCrossRef(accountId: Long, ledgerId: Long): AccountLedgerCrossRef?
 
-    /** 返回指定账户适用的账本标识。 */
-    @Query("SELECT ledger_id FROM account_ledger_cross_ref WHERE account_id = :accountId")
-    suspend fun findAccountLedgerIds(accountId: Long): List<Long>
-
     /** 新增账本。 */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertLedger(ledger: LedgerEntity): Long

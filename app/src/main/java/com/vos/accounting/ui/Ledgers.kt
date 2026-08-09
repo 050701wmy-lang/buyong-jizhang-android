@@ -170,7 +170,7 @@ fun LedgerScreen(
     onSelect: (Long) -> Unit,
 ) {
     SecondaryScaffold(
-        title = "选择账本",
+        title = "账本管理",
         backdrop = backdrop,
         onBack = onBack,
         actions = { TopBarIconAction(MiuixIcons.Add, "添加账本", onAdd) },
@@ -194,10 +194,10 @@ fun LedgerScreen(
 
 /** 显示两列账本卡片。 */
 @Composable
-private fun LedgerGrid(
+internal fun LedgerGrid(
     ledgers: List<LedgerRecord>,
     currentLedgerId: Long,
-    onEdit: (Long) -> Unit,
+    onEdit: ((Long) -> Unit)?,
     onSelect: (Long) -> Unit,
 ) {
     Column(
@@ -220,11 +220,17 @@ private fun LedgerGrid(
 private fun LedgerCard(
     ledger: LedgerRecord,
     current: Boolean,
-    onEdit: (Long) -> Unit,
+    onEdit: ((Long) -> Unit)?,
     onSelect: (Long) -> Unit,
     modifier: Modifier,
 ) {
-    Card(modifier = modifier.combinedClickable(onClick = { onSelect(ledger.id) }, onLongClick = { onEdit(ledger.id) }), insideMargin = PaddingValues(0.dp)) {
+    Card(
+        modifier = modifier.combinedClickable(
+            onClick = { onSelect(ledger.id) },
+            onLongClick = onEdit?.let { edit -> { edit(ledger.id) } },
+        ),
+        insideMargin = PaddingValues(0.dp),
+    ) {
         val textColor = ledgerCoverTextColor(ledger.coverKey)
         Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).squircleClip(16.dp)) {
             LedgerCover(ledger.coverKey, Modifier.fillMaxSize())

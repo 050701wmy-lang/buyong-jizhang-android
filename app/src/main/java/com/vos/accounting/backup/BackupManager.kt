@@ -20,8 +20,6 @@ class BackupManager(
     private val context: Context,
     private val dao: AccountingDao,
 ) {
-    private val ledgerCoverKind = "ledger_cover"
-    private val accountIconKind = "account_icon"
     private val maxMediaFileBytes = 16L * 1024 * 1024
 
     /** 导出当前全部数据为加密备份字节。 */
@@ -31,14 +29,14 @@ class BackupManager(
         val accounts = dao.getAllAccounts().map { account ->
             readAccountIcon(account)?.let { (entry, bytes) ->
                 mediaBytes[entry] = bytes
-                mediaRefs += BackupMediaRef(entry, accountIconKind, account.id)
+                mediaRefs += BackupMediaRef(entry)
                 account.copy(iconKey = BACKUP_MEDIA_PREFIX + entry)
             } ?: account
         }
         val ledgers = dao.getAllLedgers().map { ledger ->
             readLedgerCover(ledger)?.let { (entry, bytes) ->
                 mediaBytes[entry] = bytes
-                mediaRefs += BackupMediaRef(entry, ledgerCoverKind, ledger.id)
+                mediaRefs += BackupMediaRef(entry)
                 ledger.copy(coverKey = BACKUP_MEDIA_PREFIX + entry)
             } ?: ledger
         }

@@ -40,7 +40,7 @@ class BackupCodecTest {
     fun zipRoundTripWithMedia() {
         val data = BackupData(
             createdAt = 1,
-            media = listOf(BackupMediaRef("ledger_cover_1.jpg", "ledger_cover", 1)),
+            media = listOf(BackupMediaRef("ledger_cover_1.jpg")),
         )
         val media = mapOf("ledger_cover_1.jpg" to byteArrayOf(1, 2, 3))
         val content = BackupCodec.unzip(BackupCodec.buildZip(data, media))

@@ -1,58 +1,89 @@
 package com.vos.accounting.ui
 
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.BankCards
-import top.yukonga.miuix.kmp.icon.extended.Carrier
-import top.yukonga.miuix.kmp.icon.extended.Community
-import top.yukonga.miuix.kmp.icon.extended.Contacts
-import top.yukonga.miuix.kmp.icon.extended.Favorites
-import top.yukonga.miuix.kmp.icon.extended.FavoritesFill
-import top.yukonga.miuix.kmp.icon.extended.Home
-import top.yukonga.miuix.kmp.icon.extended.Import
-import top.yukonga.miuix.kmp.icon.extended.MapAlbum
-import top.yukonga.miuix.kmp.icon.extended.More
-import top.yukonga.miuix.kmp.icon.extended.Music
-import top.yukonga.miuix.kmp.icon.extended.Phone
-import top.yukonga.miuix.kmp.icon.extended.Promotions
-import top.yukonga.miuix.kmp.icon.extended.Send
-import top.yukonga.miuix.kmp.icon.extended.Store
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 表示分类编辑器中可选择的一个持久化图标，colorful 为 true 时保持原彩色不被主题色覆盖。
+ * 表示分类编辑器中的持久化 MIUIX 图标。
  */
 internal data class CategoryIconOption(
     val key: String,
     val icon: ImageVector,
-    val colorful: Boolean = false,
 )
 
 /**
- * 内置 MIUIX 分类图标集合，作为自定义图标之外的补充选项。
+ * 提供分类可选图标集合并保持已有 icon_key 兼容。
  */
-private val miuiCategoryIconOptions = listOf(
-    CategoryIconOption("store", MiuixIcons.Store),
-    CategoryIconOption("carrier", MiuixIcons.Carrier),
-    CategoryIconOption("bank_cards", MiuixIcons.BankCards),
-    CategoryIconOption("home", MiuixIcons.Home),
-    CategoryIconOption("music", MiuixIcons.Music),
-    CategoryIconOption("promotions", MiuixIcons.Promotions),
-    CategoryIconOption("more", MiuixIcons.More),
-    CategoryIconOption("favorites", MiuixIcons.Favorites),
-    CategoryIconOption("favorites_fill", MiuixIcons.FavoritesFill),
-    CategoryIconOption("contacts", MiuixIcons.Contacts),
-    CategoryIconOption("community", MiuixIcons.Community),
-    CategoryIconOption("phone", MiuixIcons.Phone),
-    CategoryIconOption("map_album", MiuixIcons.MapAlbum),
-    CategoryIconOption("send", MiuixIcons.Send),
-    CategoryIconOption("import", MiuixIcons.Import),
+internal val categoryIconOptions: List<CategoryIconOption> = listOf(
+    CategoryIconOption("custom_consumption", CategoryConsumptionIcon),
+    CategoryIconOption("custom_dining", CategoryDiningIcon),
+    CategoryIconOption("custom_other", CategoryOtherIcon),
+    CategoryIconOption("custom_transfer", CategoryTransferIcon),
+    CategoryIconOption("custom_education", CategoryEducationIcon),
+    CategoryIconOption("custom_shopping", CategoryShoppingIcon),
+    CategoryIconOption("custom_social", CategorySocialIcon),
+    CategoryIconOption("custom_entertainment", CategoryEntertainmentIcon),
+    CategoryIconOption("custom_housing", CategoryHousingIcon),
+    CategoryIconOption("custom_transport", CategoryTransportIcon),
+    CategoryIconOption("custom_red_packet", CategoryRedPacketIcon),
+    CategoryIconOption("custom_investment", CategoryInvestmentIcon),
+    CategoryIconOption("custom_communication", CategoryCommunicationIcon),
+    CategoryIconOption("custom_medical", CategoryMedicalIcon),
+    CategoryIconOption("custom_travel", CategoryTravelIcon),
+    CategoryIconOption("custom_lend_out", CategoryLendOutIcon),
+    CategoryIconOption("custom_repay", CategoryRepayIcon),
+    CategoryIconOption("custom_beauty", CategoryBeautyIcon),
+    CategoryIconOption("custom_family", CategoryFamilyIcon),
+    CategoryIconOption("custom_pet", CategoryPetIcon),
+    CategoryIconOption("custom_pay_for", CategoryPayForIcon),
+    CategoryIconOption("custom_refund", CategoryRefundIcon),
+    CategoryIconOption("custom_salary", CategorySalaryIcon),
+    CategoryIconOption("custom_wealth", CategoryWealthIcon),
+    CategoryIconOption("custom_borrow_in", CategoryBorrowInIcon),
+    CategoryIconOption("custom_collect", CategoryCollectIcon),
 )
 
 /**
- * 提供分类可选图标集合，按“添加”对话框中每行五个排列，自定义彩色图标在前。
+ * 将旧版通用图标键映射到语义最接近的新图标键。
  */
-internal val categoryIconOptions: List<CategoryIconOption> =
-    customCategoryIconOptions + miuiCategoryIconOptions
+private val legacyCategoryIconAliases = mapOf(
+    "store" to "custom_shopping",
+    "carrier" to "custom_transport",
+    "bank_cards" to "custom_consumption",
+    "home" to "custom_housing",
+    "music" to "custom_entertainment",
+    "promotions" to "custom_investment",
+    "more" to "custom_other",
+    "favorites" to "custom_pet",
+    "favorites_fill" to "custom_pet",
+    "contacts" to "custom_family",
+    "community" to "custom_social",
+    "phone" to "custom_communication",
+    "map_album" to "custom_travel",
+    "send" to "custom_lend_out",
+    "import" to "custom_transfer",
+)
+
+/**
+ * 使用统一尺寸与主题色展示分类 MIUIX 图标。
+ */
+@Composable
+internal fun CategoryIcon(
+    option: CategoryIconOption,
+    modifier: Modifier = Modifier,
+    tint: Color? = null,
+) {
+    Icon(
+        imageVector = option.icon,
+        contentDescription = null,
+        modifier = modifier,
+        tint = tint ?: MiuixTheme.colorScheme.primary,
+    )
+}
 
 /**
  * 返回图标键对应的图标选项，兼容旧分类名称，未匹配时回退到“其他”。
@@ -60,7 +91,9 @@ internal val categoryIconOptions: List<CategoryIconOption> =
 internal fun categoryIconOption(
     iconKey: String,
     fallbackName: String,
-): CategoryIconOption = categoryIconOptions.firstOrNull { it.key == iconKey }
+): CategoryIconOption = categoryIconOptions.firstOrNull {
+    it.key == (legacyCategoryIconAliases[iconKey] ?: iconKey)
+}
     ?: categoryIconOptions.firstOrNull { it.key == defaultCategoryIconKey(fallbackName) }
     ?: categoryIconOptions.first()
 
@@ -76,8 +109,7 @@ internal fun defaultCategoryIconKey(name: String): String = when (name) {
     "购物" -> "custom_shopping"
     "人情社交" -> "custom_social"
     "娱乐" -> "custom_entertainment"
-    "住房" -> "custom_housing"
-    "居住" -> "custom_housing"
+    "住房", "居住" -> "custom_housing"
     "交通" -> "custom_transport"
     "红包" -> "custom_red_packet"
     "投资" -> "custom_investment"
@@ -91,25 +123,10 @@ internal fun defaultCategoryIconKey(name: String): String = when (name) {
     "宠物" -> "custom_pet"
     "代付" -> "custom_pay_for"
     "退款" -> "custom_refund"
-    "薪资" -> "custom_salary"
-    "工资" -> "custom_salary"
+    "薪资", "工资" -> "custom_salary"
     "理财" -> "custom_wealth"
     "借入" -> "custom_borrow_in"
     "收债" -> "custom_collect"
     "其他收入" -> "custom_other"
-    else -> "more"
+    else -> "custom_other"
 }
-
-/**
- * 返回真实分类名称对应的分类图标。
- */
-internal fun accountingCategoryIcon(name: String): ImageVector =
-    categoryIconOption(iconKey = defaultCategoryIconKey(name), fallbackName = name).icon
-
-/**
- * 返回持久化图标键对应的分类图标，并兼容旧分类名称。
- */
-internal fun accountingCategoryIcon(
-    iconKey: String,
-    fallbackName: String,
-): ImageVector = categoryIconOption(iconKey, fallbackName).icon

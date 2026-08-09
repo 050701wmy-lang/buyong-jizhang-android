@@ -203,6 +203,11 @@ fun AccountingApp() {
                             },
                             initialAccountId = route.accountId,
                             onSave = viewModel::saveTransaction,
+                            onAddLedger = { navigateTo(LedgerEditorRoute()) },
+                            onManageLedgers = { navigateTo(LedgerRoute) },
+                            onAddAccount = { ledgerId ->
+                                navigateTo(AccountEditorRoute(ledgerIds = listOf(ledgerId)))
+                            },
                             onAddCategory = viewModel::addCategory,
                         )
                     }
@@ -223,6 +228,11 @@ fun AccountingApp() {
                                 onSave = viewModel::saveTransaction,
                                 onUpdate = viewModel::updateTransaction,
                                 onDelete = viewModel::deleteTransaction,
+                                onAddLedger = { navigateTo(LedgerEditorRoute()) },
+                                onManageLedgers = { navigateTo(LedgerRoute) },
+                                onAddAccount = { ledgerId ->
+                                    navigateTo(AccountEditorRoute(ledgerIds = listOf(ledgerId)))
+                                },
                                 onAddCategory = viewModel::addCategory,
                             )
                         }

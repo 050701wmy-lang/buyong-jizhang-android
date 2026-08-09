@@ -1180,15 +1180,9 @@ private fun DetailsTransactionRow(
             contentAlignment = Alignment.Center,
         ) {
             val iconOption = categoryIconOption(record.categoryIconKey, record.categoryName)
-            Icon(
-                imageVector = iconOption.icon,
-                contentDescription = null,
+            CategoryIcon(
+                option = iconOption,
                 modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-                tint = if (iconOption.colorful) {
-                    Color.Unspecified
-                } else {
-                    MiuixTheme.colorScheme.primary.copy(alpha = 0.72f)
-                },
             )
         }
         Column(

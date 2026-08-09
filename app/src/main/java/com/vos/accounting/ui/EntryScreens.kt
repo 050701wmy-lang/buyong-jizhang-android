@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -58,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.sp
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
@@ -84,6 +89,7 @@ import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.basic.TopAppBarDefaults
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
@@ -94,6 +100,7 @@ import top.yukonga.miuix.kmp.icon.extended.ChevronForward
 import top.yukonga.miuix.kmp.icon.extended.Close
 import top.yukonga.miuix.kmp.icon.extended.Notes
 import top.yukonga.miuix.kmp.icon.extended.Ok
+import top.yukonga.miuix.kmp.icon.extended.Settings
 import top.yukonga.miuix.kmp.icon.extended.Store
 import top.yukonga.miuix.kmp.icon.extended.Timer
 import top.yukonga.miuix.kmp.squircle.squircleBackground
@@ -124,6 +131,9 @@ fun ManualEntryScreen(
     onSave: (TransactionDraft, () -> Unit) -> Unit,
     onUpdate: (Long, TransactionDraft, () -> Unit) -> Unit = { _, _, _ -> },
     onDelete: (Long, () -> Unit) -> Unit = { _, _ -> },
+    onAddLedger: () -> Unit,
+    onManageLedgers: () -> Unit,
+    onAddAccount: (Long) -> Unit,
     onAddCategory: (
         String,
         TransactionType,
@@ -147,6 +157,23 @@ fun ManualEntryScreen(
     var accountId by rememberSaveable(transaction?.id, initialAccountId) {
         mutableStateOf(transaction?.accountId ?: initialAccountId)
     }
+    var ledgerId by rememberSaveable(transaction?.id, initialAccountId) {
+        mutableStateOf(
+            transaction?.ledgerId
+                ?: uiState.currentLedgerId.takeIf { currentLedgerId ->
+                    initialAccountId == 0L || uiState.accountLedgerCrossRefs.any {
+                        it.accountId == initialAccountId && it.ledgerId == currentLedgerId
+                    }
+                }
+                ?: uiState.accountLedgerCrossRefs.firstOrNull {
+                    it.accountId == initialAccountId
+                }?.ledgerId
+                ?: uiState.currentLedgerId,
+        )
+    }
+    var observedCurrentLedgerId by rememberSaveable(transaction?.id) {
+        mutableStateOf(uiState.currentLedgerId)
+    }
     var categoryId by rememberSaveable(transaction?.id) {
         mutableStateOf(transaction?.categoryId ?: 0L)
     }
@@ -155,14 +182,21 @@ fun ManualEntryScreen(
     }
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
+    var showLedgerPicker by rememberSaveable { mutableStateOf(false) }
     var occurredAt by rememberSaveable(transaction?.id) {
         mutableStateOf(transaction?.occurredAt ?: System.currentTimeMillis())
     }
     val matchingCategories = uiState.categories.filter {
         it.type == type && (!it.isArchived || it.id == transaction?.categoryId)
     }
+    val selectableLedgers = uiState.ledgers.filter {
+        !it.isHidden || it.id == transaction?.ledgerId
+    }
+    val linkedAccountIds = uiState.accountLedgerCrossRefs
+        .filter { it.ledgerId == ledgerId }
+        .mapTo(mutableSetOf(), AccountLedgerCrossRef::accountId)
     val selectableAccounts = uiState.accounts.filter {
-        !it.isArchived || it.id == transaction?.accountId
+        it.id in linkedAccountIds && (!it.isArchived || it.id == transaction?.accountId)
     }
     val amountMinor = calculateManualAmount(amountExpression)
     val currencySymbol = uiState.accounts
@@ -171,6 +205,21 @@ fun ManualEntryScreen(
         ?.symbol
         ?: "¥"
 
+    LaunchedEffect(selectableLedgers) {
+        if (selectableLedgers.none { it.id == ledgerId }) {
+            ledgerId = selectableLedgers.firstOrNull()?.id ?: 0
+        }
+    }
+    LaunchedEffect(uiState.currentLedgerId) {
+        if (
+            transaction == null &&
+            uiState.currentLedgerId != observedCurrentLedgerId &&
+            selectableLedgers.any { it.id == uiState.currentLedgerId }
+        ) {
+            ledgerId = uiState.currentLedgerId
+        }
+        observedCurrentLedgerId = uiState.currentLedgerId
+    }
     LaunchedEffect(selectableAccounts) {
         if (selectableAccounts.none { it.id == accountId }) {
             accountId = selectableAccounts.firstOrNull(AccountEntity::isDefault)?.id
@@ -185,10 +234,11 @@ fun ManualEntryScreen(
     }
 
     SecondaryScaffold(
-        title = if (transaction == null) "记一笔" else "编辑",
+        title = selectableLedgers.firstOrNull { it.id == ledgerId }?.name.orEmpty(),
         backdrop = backdrop,
         onBack = onBack,
         collapsible = false,
+        onTitleClick = { showLedgerPicker = true },
         navigationIcon = MiuixIcons.Close,
         navigationContentDescription = "关闭",
     ) { innerPadding ->
@@ -200,11 +250,14 @@ fun ManualEntryScreen(
             type = type,
             categories = matchingCategories,
             categoryId = categoryId,
+            accounts = selectableAccounts,
+            accountId = accountId,
             note = note,
             merchant = merchant,
             occurredAt = occurredAt,
             canSave = amountMinor != null &&
-                accountId != 0L &&
+                selectableLedgers.any { it.id == ledgerId } &&
+                selectableAccounts.any { it.id == accountId } &&
                 matchingCategories.any { it.id == categoryId } &&
                 !uiState.writeInProgress,
             writeInProgress = uiState.writeInProgress,
@@ -212,6 +265,8 @@ fun ManualEntryScreen(
             keypadVisible = keypadVisible,
             onSelectType = { type = it },
             onSelectCategory = { categoryId = it },
+            onSelectAccount = { accountId = it },
+            onAddAccount = { onAddAccount(ledgerId) },
             onAddCategory = { showCategoryDialog = true },
             onNoteChange = { note = it },
             onMerchantChange = { merchant = it },
@@ -232,7 +287,7 @@ fun ManualEntryScreen(
                         note = note.text,
                         occurredAt = occurredAt,
                         source = transaction?.source ?: TransactionSource.MANUAL,
-                        ledgerId = transaction?.ledgerId ?: uiState.currentLedgerId,
+                        ledgerId = ledgerId,
                     )
                     if (transaction == null) {
                         onSave(draft, onBack)
@@ -243,6 +298,24 @@ fun ManualEntryScreen(
             },
         )
     }
+    ManualLedgerPickerSheet(
+        show = showLedgerPicker,
+        ledgers = selectableLedgers,
+        selectedId = ledgerId,
+        onDismiss = { showLedgerPicker = false },
+        onSelect = {
+            ledgerId = it
+            showLedgerPicker = false
+        },
+        onAdd = {
+            showLedgerPicker = false
+            onAddLedger()
+        },
+        onManage = {
+            showLedgerPicker = false
+            onManageLedgers()
+        },
+    )
     CategoryEditorDialog(
         show = showCategoryDialog,
         type = type,
@@ -278,6 +351,8 @@ private fun ManualEntryContent(
     type: TransactionType,
     categories: List<CategoryEntity>,
     categoryId: Long,
+    accounts: List<AccountEntity>,
+    accountId: Long,
     note: TextFieldValue,
     merchant: TextFieldValue,
     occurredAt: Long,
@@ -287,6 +362,8 @@ private fun ManualEntryContent(
     keypadVisible: Boolean,
     onSelectType: (TransactionType) -> Unit,
     onSelectCategory: (Long) -> Unit,
+    onSelectAccount: (Long) -> Unit,
+    onAddAccount: () -> Unit,
     onAddCategory: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onMerchantChange: (TextFieldValue) -> Unit,
@@ -353,10 +430,14 @@ private fun ManualEntryContent(
                 },
             )
             ManualDetailRows(
+                accounts = accounts,
+                accountId = accountId,
                 occurredAt = occurredAt,
                 note = note,
                 merchant = merchant,
                 onOccurredAtChange = onOccurredAtChange,
+                onSelectAccount = onSelectAccount,
+                onAddAccount = onAddAccount,
                 onNoteChange = onNoteChange,
                 onMerchantChange = onMerchantChange,
                 onNoteFocusChange = { noteFocused = it },
@@ -607,50 +688,40 @@ private fun ManualCategoryItem(
     onClick: () -> Unit,
 ) {
     val iconOption = categoryIconOption(category.iconKey, category.name)
+    val iconContainerModifier = if (selected) {
+        Modifier
+            .size(52.dp)
+            .squircleBackground(
+                color = MiuixTheme.colorScheme.primary,
+                cornerRadius = 15.dp,
+            )
+            .squircleClip(15.dp)
+    } else {
+        Modifier
+            .size(52.dp)
+            .squircleBackground(
+                color = MiuixTheme.colorScheme.surfaceContainerHigh,
+                cornerRadius = 15.dp,
+            )
+            .padding(1.dp)
+            .squircleBackground(
+                color = MiuixTheme.colorScheme.surface,
+                cornerRadius = 14.dp,
+            )
+            .squircleClip(14.dp)
+    }
     Column(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier
-                .size(46.dp)
-                .squircleBackground(
-                    color = if (selected) {
-                        if (iconOption.colorful) {
-                            MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        } else {
-                            MiuixTheme.colorScheme.primary
-                        }
-                    } else {
-                        MiuixTheme.colorScheme.surfaceContainerHigh
-                    },
-                    cornerRadius = 13.dp,
-                )
-                .then(
-                    if (selected && !iconOption.colorful) {
-                        Modifier
-                    } else {
-                        Modifier
-                            .padding(1.dp)
-                            .squircleBackground(
-                                color = MiuixTheme.colorScheme.surface,
-                                cornerRadius = 12.dp,
-                            )
-                    },
-                ),
+            modifier = iconContainerModifier.clickable(onClick = onClick),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = iconOption.icon,
-                contentDescription = null,
-                modifier = Modifier.size(26.dp),
-                tint = if (iconOption.colorful) {
-                    Color.Unspecified
-                } else if (selected) {
-                    Color.White
-                } else {
-                    MiuixTheme.colorScheme.primary.copy(alpha = 0.58f)
-                },
+            CategoryIcon(
+                option = iconOption,
+                modifier = Modifier.size(28.dp),
+                tint = if (selected) Color.White else MiuixTheme.colorScheme.primary,
             )
         }
         Text(
@@ -683,15 +754,15 @@ private fun ManualCategoryAddItem(
     ) {
         Box(
             modifier = Modifier
-                .size(46.dp)
+                .size(52.dp)
                 .squircleBackground(
                     color = MiuixTheme.colorScheme.surfaceContainerHigh,
-                    cornerRadius = 13.dp,
+                    cornerRadius = 15.dp,
                 )
                 .padding(1.dp)
                 .squircleBackground(
                     color = MiuixTheme.colorScheme.surface,
-                    cornerRadius = 12.dp,
+                    cornerRadius = 14.dp,
                 ),
             contentAlignment = Alignment.Center,
         ) {
@@ -714,14 +785,177 @@ private fun ManualCategoryAddItem(
 }
 
 /**
- * 按参考界面展示时间和备注两行附加信息。
+ * 显示手动记账页的账本或账户单选入口。
+ */
+@Composable
+private fun ManualSelectionRow(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        Text(
+            text = title,
+            modifier = Modifier.padding(start = 8.dp),
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2,
+        )
+        Text(
+            text = value,
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 20.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MiuixTheme.textStyles.body2,
+        )
+        Icon(
+            imageVector = MiuixIcons.Basic.ArrowRight,
+            contentDescription = null,
+            modifier = Modifier.size(width = 10.dp, height = 16.dp),
+            tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+        )
+    }
+}
+
+/**
+ * 以连续账户列表展示手动记账页的账户选择弹层。
+ */
+@Composable
+private fun ManualAccountPickerSheet(
+    show: Boolean,
+    accounts: List<AccountEntity>,
+    selectedId: Long,
+    onDismiss: () -> Unit,
+    onSelect: (Long) -> Unit,
+    onAdd: () -> Unit,
+) {
+    WindowBottomSheet(
+        show = show,
+        title = "选择账户",
+        endAction = {
+            Row(modifier = Modifier.padding(end = 20.dp)) {
+                TopBarIconAction(MiuixIcons.Add, "添加账户", onAdd)
+            }
+        },
+        onDismissRequest = onDismiss,
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(0.dp, 20.dp),
+        allowDismiss = true,
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Card(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                insideMargin = PaddingValues(0.dp),
+            ) {
+                accounts.forEach { account ->
+                    BasicComponent(
+                        title = account.name,
+                        startAction = {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .squircleBackground(
+                                        color = MiuixTheme.colorScheme.secondaryContainer,
+                                        cornerRadius = 12.dp,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                AccountIcon(
+                                    iconKey = account.iconKey,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+                        },
+                        endActions = {
+                            if (account.id == selectedId) {
+                                Icon(
+                                    imageVector = MiuixIcons.Ok,
+                                    contentDescription = "当前账户",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MiuixTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                        onClick = { onSelect(account.id) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp).navigationBarsPadding())
+        }
+    }
+}
+
+/**
+ * 以账本封面网格展示手动记账页的账本选择弹层。
+ */
+@Composable
+private fun ManualLedgerPickerSheet(
+    show: Boolean,
+    ledgers: List<LedgerRecord>,
+    selectedId: Long,
+    onDismiss: () -> Unit,
+    onSelect: (Long) -> Unit,
+    onAdd: () -> Unit,
+    onManage: () -> Unit,
+) {
+    WindowBottomSheet(
+        show = show,
+        title = "选择账本",
+        endAction = {
+            Row(
+                modifier = Modifier.padding(end = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                TopBarIconAction(MiuixIcons.Add, "添加账本", onAdd)
+                TopBarIconAction(MiuixIcons.Settings, "账本管理", onManage)
+            }
+        },
+        onDismissRequest = onDismiss,
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(0.dp, 20.dp),
+        allowDismiss = true,
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Box(modifier = Modifier.padding(horizontal = 8.dp)) {
+                LedgerGrid(
+                    ledgers = ledgers,
+                    currentLedgerId = selectedId,
+                    onEdit = null,
+                    onSelect = onSelect,
+                )
+            }
+            Spacer(Modifier.height(12.dp).navigationBarsPadding())
+        }
+    }
+}
+
+/**
+ * 按参考界面展示账户、时间和备注等附加信息。
  */
 @Composable
 private fun ManualDetailRows(
+    accounts: List<AccountEntity>,
+    accountId: Long,
     occurredAt: Long,
     note: TextFieldValue,
     merchant: TextFieldValue,
     onOccurredAtChange: (Long) -> Unit,
+    onSelectAccount: (Long) -> Unit,
+    onAddAccount: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onMerchantChange: (TextFieldValue) -> Unit,
     onNoteFocusChange: (Boolean) -> Unit,
@@ -730,11 +964,22 @@ private fun ManualDetailRows(
 ) {
     val focusManager = LocalFocusManager.current
     var showDateTimePicker by rememberSaveable { mutableStateOf(false) }
+    var showAccountPicker by rememberSaveable { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp),
     ) {
+        HorizontalDivider()
+        ManualSelectionRow(
+            icon = MiuixIcons.Store,
+            title = "账户",
+            value = accounts.firstOrNull { it.id == accountId }?.name.orEmpty(),
+            onClick = {
+                onInteraction()
+                showAccountPicker = true
+            },
+        )
         HorizontalDivider()
         Row(
             modifier = Modifier
@@ -766,10 +1011,10 @@ private fun ManualDetailRows(
                 style = MiuixTheme.textStyles.body2,
             )
             Icon(
-                imageVector = MiuixIcons.ChevronForward,
+                imageVector = MiuixIcons.Basic.ArrowRight,
                 contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                modifier = Modifier.size(width = 10.dp, height = 16.dp),
+                tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
             )
         }
         HorizontalDivider()
@@ -874,6 +1119,20 @@ private fun ManualDetailRows(
         }
         HorizontalDivider()
     }
+    ManualAccountPickerSheet(
+        show = showAccountPicker,
+        accounts = accounts,
+        selectedId = accountId,
+        onDismiss = { showAccountPicker = false },
+        onSelect = {
+            onSelectAccount(it)
+            showAccountPicker = false
+        },
+        onAdd = {
+            showAccountPicker = false
+            onAddAccount()
+        },
+    )
     ManualDateTimeDialog(
         show = showDateTimePicker,
         occurredAt = occurredAt,
@@ -1200,11 +1459,7 @@ private fun CategoryEditorDialog(
                                 .size(50.dp)
                                 .squircleBackground(
                                     color = if (selected) {
-                                        if (option.colorful) {
-                                            MiuixTheme.colorScheme.primary.copy(alpha = 0.16f)
-                                        } else {
-                                            MiuixTheme.colorScheme.primary
-                                        }
+                                        MiuixTheme.colorScheme.primary
                                     } else {
                                         MiuixTheme.colorScheme.secondaryContainer
                                     },
@@ -1214,15 +1469,10 @@ private fun CategoryEditorDialog(
                                 .clickable { iconKey = option.key },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(
-                                imageVector = option.icon,
-                                contentDescription = null,
-                                modifier = Modifier.size(28.dp),
-                                tint = when {
-                                    option.colorful -> Color.Unspecified
-                                    selected -> Color.White
-                                    else -> MiuixTheme.colorScheme.primary
-                                },
+                            CategoryIcon(
+                                option = option,
+                                modifier = Modifier.size(27.dp),
+                                tint = if (selected) Color.White else MiuixTheme.colorScheme.primary,
                             )
                         }
                     }
@@ -1971,19 +2221,6 @@ private fun AccountBalanceDialog(
 }
 
 /**
- * 返回账户类型的中文标题。
- */
-internal fun accountTypeTitle(type: AccountType): String = when (type) {
-    AccountType.CASH -> "现金"
-    AccountType.BANK_CARD -> "储蓄卡"
-    AccountType.CREDIT -> "信用账户"
-    AccountType.ONLINE -> "网络账户"
-    AccountType.INVESTMENT -> "投资账户"
-    AccountType.STORED_VALUE -> "储值卡"
-    AccountType.VIRTUAL -> "虚拟账户"
-}
-
-/**
  * 将允许正负数和零的账户余额输入转换为最小货币单位。
  */
 private fun parseSignedMoneyToMinor(text: String): Long? {
@@ -2200,6 +2437,7 @@ internal fun SecondaryScaffold(
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
     collapsible: Boolean = true,
+    onTitleClick: (() -> Unit)? = null,
     navigationIcon: ImageVector = MiuixIcons.Back,
     navigationContentDescription: String = "返回",
     actions: @Composable RowScope.() -> Unit = {},
@@ -2227,24 +2465,56 @@ internal fun SecondaryScaffold(
                             )
                         }
                     }
-                    if (isWide || !collapsible) {
-                        SmallTopAppBar(
-                            title = title,
-                            color = Color.Transparent,
-                            navigationIcon = topBarNavigationIcon,
-                            actions = actions,
-                            actionIconPadding = TOP_BAR_ACTION_END_PADDING,
-                            scrollBehavior = scrollBehavior,
-                        )
-                    } else {
-                        TopAppBar(
-                            title = title,
-                            color = Color.Transparent,
-                            navigationIcon = topBarNavigationIcon,
-                            actions = actions,
-                            actionIconPadding = TOP_BAR_ACTION_END_PADDING,
-                            scrollBehavior = scrollBehavior,
-                        )
+                    Box {
+                        if (isWide || !collapsible) {
+                            SmallTopAppBar(
+                                title = if (onTitleClick == null) title else "",
+                                color = Color.Transparent,
+                                navigationIcon = topBarNavigationIcon,
+                                actions = actions,
+                                actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+                                scrollBehavior = scrollBehavior,
+                            )
+                        } else {
+                            TopAppBar(
+                                title = if (onTitleClick == null) title else "",
+                                color = Color.Transparent,
+                                navigationIcon = topBarNavigationIcon,
+                                actions = actions,
+                                actionIconPadding = TOP_BAR_ACTION_END_PADDING,
+                                scrollBehavior = scrollBehavior,
+                            )
+                        }
+                        onTitleClick?.let { clickTitle ->
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(
+                                        top = WindowInsets.statusBars
+                                            .asPaddingValues()
+                                            .calculateTopPadding(),
+                                    )
+                                    .height(TopAppBarDefaults.CollapsedHeight)
+                                    .clickable(onClick = clickTitle)
+                                    .padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = title,
+                                    fontWeight = FontWeight.Medium,
+                                    style = MiuixTheme.textStyles.title3,
+                                )
+                                Icon(
+                                    imageVector = MiuixIcons.Basic.ArrowRight,
+                                    contentDescription = "切换账本",
+                                    modifier = Modifier
+                                        .padding(start = 4.dp)
+                                        .size(width = 10.dp, height = 16.dp)
+                                        .rotate(90f),
+                                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                )
+                            }
+                        }
                     }
                 }
             },

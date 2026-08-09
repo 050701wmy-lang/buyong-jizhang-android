@@ -206,6 +206,55 @@ class AccountingDatabaseTest {
     }
 
     /**
+     * 验证编辑账目时可以切换到该账户适用的另一账本。
+     */
+    @Test
+    fun repositoryMovesTransactionToSelectedLedger() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first {
+            it.type == TransactionType.EXPENSE
+        }
+        val ledgerId = repository.addLedger(
+            name = "旅行账本",
+            coverKey = "cover_ocean",
+            useLightText = true,
+            baseCurrencyKey = "cny",
+            isHidden = false,
+        )
+        repository.saveAccount(account, setOf(1, ledgerId))
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 100,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        repository.updateTransaction(
+            id,
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 100,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+                ledgerId = ledgerId,
+            ),
+        )
+
+        assertEquals(ledgerId, dao.findTransaction(id)?.ledgerId)
+    }
+
+    /**
      * 验证保存账目时固化币种与本位币金额快照，历史报表不随后续汇率变化。
      */
     @Test

@@ -406,20 +406,19 @@ private fun AccountTransactionRow(
             } else {
                 categoryIconOption(record.categoryIconKey, record.categoryName)
             }
-            Icon(
-                imageVector = if (isTransfer) {
-                    MiuixIcons.Basic.ArrowUpDown
-                } else {
-                    iconOption!!.icon
-                },
-                contentDescription = null,
-                modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-                tint = if (iconOption?.colorful == true) {
-                    Color.Unspecified
-                } else {
-                    MiuixTheme.colorScheme.primary
-                },
-            )
+            if (isTransfer) {
+                Icon(
+                    imageVector = MiuixIcons.Basic.ArrowUpDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
+                    tint = MiuixTheme.colorScheme.primary,
+                )
+            } else {
+                CategoryIcon(
+                    option = iconOption!!,
+                    modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
+                )
+            }
         }
         Column(
             modifier = Modifier
