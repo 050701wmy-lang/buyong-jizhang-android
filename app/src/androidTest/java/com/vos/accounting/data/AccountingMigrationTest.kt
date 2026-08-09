@@ -484,6 +484,109 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v15 流水升级后保存当时账本本位币并建立外键索引。 */
+    @Test
+    fun migrateVersionFifteenToVersionSixteen() {
+        helper.createDatabase(DATABASE_NAME, 15).apply {
+            execSQL(
+                "INSERT INTO currencies (`key`, code, name, symbol, rate_to_cny_scaled, is_builtin, updated_at, auto_rate_enabled) " +
+                    "VALUES ('cny','CNY','人民币','¥',100000000,1,0,1),('usd','USD','美元','$',700000000,1,0,1)",
+            )
+            execSQL(
+                "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) " +
+                    "VALUES (1,'美元账本','cover_ocean',1,'usd',0,0)",
+            )
+            execSQL(
+                "INSERT INTO accounts (id, name, type, type_key, currency_key, opening_balance_minor, sort_order, icon_key, is_default, is_archived) " +
+                    "VALUES (1,'现金','CASH','cash','cny',0,0,'cash',1,0)",
+            )
+            execSQL(
+                "INSERT INTO categories (id, name, type, sort_order, icon_key, is_archived) " +
+                    "VALUES (1,'餐饮','EXPENSE',0,'custom_dining',0)",
+            )
+            execSQL(
+                "INSERT INTO transactions (id, type, amount_minor, account_id, category_id, merchant, note, occurred_at, source, ledger_id, currency_key, base_amount_minor, exchange_id, transfer_direction) " +
+                    "VALUES (1,'EXPENSE',700,1,1,'','',1,'MANUAL',1,'cny',100,NULL,NULL)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            16,
+            true,
+            AccountingDatabase.MIGRATION_15_16,
+        )
+        migrated.query("SELECT base_amount_minor, base_currency_key FROM transactions WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals(100, it.getLong(0))
+            assertEquals("usd", it.getString(1))
+        }
+        migrated.close()
+    }
+
+    /** 验证 v16 流水升级后原金额同时成为账户实际变动金额。 */
+    @Test
+    fun migrateVersionSixteenToVersionSeventeen() {
+        helper.createDatabase(DATABASE_NAME, 16).apply {
+            execSQL(
+                "INSERT INTO currencies (`key`, code, name, symbol, rate_to_cny_scaled, is_builtin, updated_at, auto_rate_enabled) " +
+                    "VALUES ('cny','CNY','人民币','¥',100000000,1,0,1)",
+            )
+            execSQL(
+                "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) " +
+                    "VALUES (1,'日常账本','cover_ocean',1,'cny',0,0)",
+            )
+            execSQL(
+                "INSERT INTO accounts (id, name, type, type_key, currency_key, opening_balance_minor, sort_order, icon_key, is_default, is_archived) " +
+                    "VALUES (1,'现金','CASH','cash','cny',0,0,'cash',1,0)",
+            )
+            execSQL(
+                "INSERT INTO categories (id, name, type, sort_order, icon_key, is_archived) " +
+                    "VALUES (1,'餐饮','EXPENSE',0,'custom_dining',0)",
+            )
+            execSQL(
+                "INSERT INTO transactions (id, type, amount_minor, account_id, category_id, merchant, note, occurred_at, source, ledger_id, currency_key, base_amount_minor, base_currency_key, exchange_id, transfer_direction) " +
+                    "VALUES (1,'EXPENSE',1234,1,1,'','',1,'MANUAL',1,'cny',1234,'cny',NULL,NULL)",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            17,
+            true,
+            AccountingDatabase.MIGRATION_16_17,
+        )
+        migrated.query("SELECT amount_minor, account_amount_minor FROM transactions WHERE id = 1").use {
+            it.moveToFirst()
+            assertEquals(1234, it.getLong(0))
+            assertEquals(1234, it.getLong(1))
+        }
+        migrated.close()
+    }
+
+    /** 验证 v17 升级后新增的收支金额颜色开关默认关闭。 */
+    @Test
+    fun migrateVersionSeventeenToVersionEighteen() {
+        helper.createDatabase(DATABASE_NAME, 17).close()
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            18,
+            true,
+            AccountingDatabase.MIGRATION_17_18,
+        )
+        migrated.query(
+            "SELECT dflt_value FROM pragma_table_info('app_settings') " +
+                "WHERE name = 'colored_transaction_amounts_enabled'",
+        ).use {
+            it.moveToFirst()
+            assertEquals("0", it.getString(0))
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */

@@ -151,6 +151,8 @@ class BackupCodecTest {
                     ledgerId = 1,
                     currencyKey = "usd",
                     baseAmountMinor = 67598,
+                    baseCurrencyKey = "cny",
+                    accountAmountMinor = 100,
                     exchangeId = 9,
                     transferDirection = TransferDirection.IN,
                 ),

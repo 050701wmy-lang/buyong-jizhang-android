@@ -18,8 +18,6 @@ import androidx.room.Update
 import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
 import com.vos.accounting.model.AccountType
-import com.vos.accounting.model.CategoryTotal
-import com.vos.accounting.model.OverviewTotals
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransferDirection
@@ -271,6 +269,8 @@ data class AppSettingsEntity(
     val followSystemColor: Boolean = true,
     @ColumnInfo(name = "predictive_back_animation_enabled", defaultValue = "0")
     val predictiveBackAnimationEnabled: Boolean = false,
+    @ColumnInfo(name = "colored_transaction_amounts_enabled", defaultValue = "0")
+    val coloredTransactionAmountsEnabled: Boolean = false,
     @ColumnInfo(name = "current_ledger_id", defaultValue = "1")
     val currentLedgerId: Long = 1,
 )
@@ -305,12 +305,19 @@ data class AppSettingsEntity(
             childColumns = ["currency_key"],
             onDelete = ForeignKey.RESTRICT,
         ),
+        ForeignKey(
+            entity = CurrencyEntity::class,
+            parentColumns = ["key"],
+            childColumns = ["base_currency_key"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
     ],
     indices = [
         Index("account_id"),
         Index("category_id"),
         Index("occurred_at"),
         Index("currency_key"),
+        Index("base_currency_key"),
         Index(value = ["ledger_id", "occurred_at", "id"]),
     ],
 )
@@ -321,6 +328,8 @@ data class TransactionEntity(
     val type: TransactionType,
     @ColumnInfo(name = "amount_minor")
     val amountMinor: Long,
+    @ColumnInfo(name = "account_amount_minor", defaultValue = "0")
+    val accountAmountMinor: Long = 0,
     @ColumnInfo(name = "account_id")
     val accountId: Long,
     @ColumnInfo(name = "category_id")
@@ -336,6 +345,8 @@ data class TransactionEntity(
     val currencyKey: String = "cny",
     @ColumnInfo(name = "base_amount_minor")
     val baseAmountMinor: Long = 0,
+    @ColumnInfo(name = "base_currency_key")
+    val baseCurrencyKey: String = "",
     @ColumnInfo(name = "exchange_id")
     val exchangeId: Long? = null,
     @ColumnInfo(name = "transfer_direction")
@@ -350,8 +361,12 @@ data class TransactionRecord(
     val type: TransactionType,
     @ColumnInfo(name = "amount_minor")
     val amountMinor: Long,
+    @ColumnInfo(name = "account_amount_minor")
+    val accountAmountMinor: Long,
     @ColumnInfo(name = "base_amount_minor")
     val baseAmountMinor: Long,
+    @ColumnInfo(name = "base_currency_key")
+    val baseCurrencyKey: String,
     @ColumnInfo(name = "account_id")
     val accountId: Long,
     @ColumnInfo(name = "category_id")
@@ -371,6 +386,10 @@ data class TransactionRecord(
     val currencyKey: String,
     @ColumnInfo(name = "currency_symbol")
     val currencySymbol: String,
+    @ColumnInfo(name = "account_currency_key")
+    val accountCurrencyKey: String,
+    @ColumnInfo(name = "account_currency_symbol")
+    val accountCurrencySymbol: String,
     @ColumnInfo(name = "currency_rate_to_cny_scaled")
     val currencyRateToCnyScaled: Long,
     @ColumnInfo(name = "ledger_id")
@@ -392,7 +411,9 @@ private const val TRANSACTION_SELECT =
             transactions.id AS id,
             transactions.type AS type,
             transactions.amount_minor AS amount_minor,
+            transactions.account_amount_minor AS account_amount_minor,
             transactions.base_amount_minor AS base_amount_minor,
+            transactions.base_currency_key AS base_currency_key,
             transactions.account_id AS account_id,
             transactions.category_id AS category_id,
             transactions.merchant AS merchant,
@@ -404,14 +425,17 @@ private const val TRANSACTION_SELECT =
             COALESCE(categories.name, '币种兑换') AS category_name,
             COALESCE(categories.icon_key, '') AS category_icon_key,
             transactions.currency_key AS currency_key,
-            currencies.symbol AS currency_symbol,
-            currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
+            transaction_currencies.symbol AS currency_symbol,
+            accounts.currency_key AS account_currency_key,
+            account_currencies.symbol AS account_currency_symbol,
+            transaction_currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
             transactions.exchange_id AS exchange_id,
             transactions.transfer_direction AS transfer_direction
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         LEFT JOIN categories ON categories.id = transactions.category_id
-        INNER JOIN currencies ON currencies.`key` = transactions.currency_key
+        INNER JOIN currencies transaction_currencies ON transaction_currencies.`key` = transactions.currency_key
+        INNER JOIN currencies account_currencies ON account_currencies.`key` = accounts.currency_key
     """
 
 @Dao
@@ -461,36 +485,6 @@ interface AccountingDao {
     fun observeAllTransactions(): Flow<List<TransactionRecord>>
 
     /**
-     * 持续观察全部账目的收支汇总。
-     */
-    @Query(
-        """
-        SELECT
-            COALESCE(SUM(CASE WHEN transactions.type = 'INCOME' THEN transactions.base_amount_minor ELSE 0 END), 0) AS income_minor,
-            COALESCE(SUM(CASE WHEN transactions.type = 'EXPENSE' THEN transactions.base_amount_minor ELSE 0 END), 0) AS expense_minor
-        FROM transactions
-        WHERE transactions.ledger_id = :ledgerId
-        """,
-    )
-    fun observeOverviewTotals(ledgerId: Long): Flow<OverviewTotals>
-
-    /**
-     * 持续观察支出分类汇总。
-     */
-    @Query(
-        """
-        SELECT categories.name AS category_name,
-            SUM(transactions.base_amount_minor) AS amount_minor
-        FROM transactions
-        INNER JOIN categories ON categories.id = transactions.category_id
-        WHERE transactions.type = 'EXPENSE' AND transactions.ledger_id = :ledgerId
-        GROUP BY categories.id
-        ORDER BY amount_minor DESC
-        """,
-    )
-    fun observeExpenseCategoryTotals(ledgerId: Long): Flow<List<CategoryTotal>>
-
-    /**
      * 持续观察应用外观设置。
      */
     @Query("SELECT * FROM app_settings WHERE id = 1")
@@ -519,6 +513,10 @@ interface AccountingDao {
      */
     @Query("UPDATE app_settings SET predictive_back_animation_enabled = :enabled WHERE id = 1")
     suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean)
+
+    /** 只更新收支金额是否使用红绿字体。 */
+    @Query("UPDATE app_settings SET colored_transaction_amounts_enabled = :enabled WHERE id = 1")
+    suspend fun updateColoredTransactionAmountsEnabled(enabled: Boolean)
 
     /** 返回应用设置中记录的当前账本标识。 */
     @Query("SELECT current_ledger_id FROM app_settings WHERE id = 1")
@@ -649,12 +647,12 @@ interface AccountingDao {
     }
 
     /** 返回引用指定币种的账目数量。 */
-    @Query("SELECT COUNT(*) FROM transactions WHERE currency_key = :currencyKey")
+    @Query("SELECT COUNT(*) FROM transactions WHERE currency_key = :currencyKey OR base_currency_key = :currencyKey")
     suspend fun countTransactionsByCurrencyKey(currencyKey: String): Int
 
     /** 返回账户或账本实际使用的币种标识。 */
     @Query(
-        "SELECT DISTINCT currency_key FROM accounts UNION SELECT DISTINCT base_currency_key FROM ledgers",
+        "SELECT DISTINCT currency_key FROM accounts UNION SELECT DISTINCT base_currency_key FROM ledgers UNION SELECT DISTINCT currency_key FROM transactions UNION SELECT DISTINCT base_currency_key FROM transactions",
     )
     suspend fun usedCurrencyKeys(): List<String>
 
@@ -944,10 +942,10 @@ interface AccountingDao {
     ): Long {
         val balanceMinor = existing.openingBalanceMinor + transactionsByAccount(existing.id).sumOf { record ->
             when {
-                record.type == TransactionType.INCOME -> record.amountMinor
+                record.type == TransactionType.INCOME -> record.accountAmountMinor
                 record.type == TransactionType.TRANSFER &&
-                    record.transferDirection == TransferDirection.IN -> record.amountMinor
-                else -> -record.amountMinor
+                    record.transferDirection == TransferDirection.IN -> record.accountAmountMinor
+                else -> -record.accountAmountMinor
             }
         }
         val oldCurrency = findCurrency(existing.currencyKey)
@@ -973,6 +971,7 @@ interface AccountingDao {
             TransactionEntity(
                 type = TransactionType.TRANSFER,
                 amountMinor = balanceMinor,
+                accountAmountMinor = balanceMinor,
                 accountId = existing.id,
                 categoryId = null,
                 merchant = "",
@@ -986,6 +985,7 @@ interface AccountingDao {
                     oldCurrency.rateToCnyScaled,
                     baseCurrency.rateToCnyScaled,
                 ),
+                baseCurrencyKey = baseCurrency.key,
                 exchangeId = exchangeId,
                 transferDirection = TransferDirection.OUT,
             ),
@@ -999,6 +999,7 @@ interface AccountingDao {
             TransactionEntity(
                 type = TransactionType.TRANSFER,
                 amountMinor = newAmountMinor,
+                accountAmountMinor = newAmountMinor,
                 accountId = newAccountId,
                 categoryId = null,
                 merchant = "",
@@ -1012,6 +1013,7 @@ interface AccountingDao {
                     newCurrency.rateToCnyScaled,
                     baseCurrency.rateToCnyScaled,
                 ),
+                baseCurrencyKey = baseCurrency.key,
                 exchangeId = exchangeId,
                 transferDirection = TransferDirection.IN,
             ),
@@ -1240,7 +1242,7 @@ interface AccountingDao {
         TransactionEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 15,
+    version = 18,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1272,6 +1274,9 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_12_13,
             MIGRATION_13_14,
             MIGRATION_14_15,
+            MIGRATION_15_16,
+            MIGRATION_16_17,
+            MIGRATION_17_18,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1883,6 +1888,88 @@ abstract class AccountingDatabase : RoomDatabase() {
                         ELSE icon_key
                     END
                     """.trimIndent(),
+                )
+            }
+        }
+
+        internal val MIGRATION_15_16 = object : Migration(15, 16) {
+            /** 为历史本位币金额补充所属币种，避免修改账本本位币后重释快照。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE transactions_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        type TEXT NOT NULL,
+                        amount_minor INTEGER NOT NULL,
+                        account_id INTEGER NOT NULL,
+                        category_id INTEGER,
+                        merchant TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        occurred_at INTEGER NOT NULL,
+                        source TEXT NOT NULL,
+                        ledger_id INTEGER NOT NULL,
+                        currency_key TEXT NOT NULL,
+                        base_amount_minor INTEGER NOT NULL,
+                        base_currency_key TEXT NOT NULL,
+                        exchange_id INTEGER,
+                        transfer_direction TEXT,
+                        FOREIGN KEY(account_id) REFERENCES accounts(id) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(category_id) REFERENCES categories(id) ON UPDATE NO ACTION ON DELETE SET NULL,
+                        FOREIGN KEY(ledger_id) REFERENCES ledgers(id) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(currency_key) REFERENCES currencies(`key`) ON UPDATE NO ACTION ON DELETE RESTRICT,
+                        FOREIGN KEY(base_currency_key) REFERENCES currencies(`key`) ON UPDATE NO ACTION ON DELETE RESTRICT
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    INSERT INTO transactions_new (
+                        id, type, amount_minor, account_id, category_id, merchant, note, occurred_at,
+                        source, ledger_id, currency_key, base_amount_minor, base_currency_key,
+                        exchange_id, transfer_direction
+                    )
+                    SELECT
+                        transactions.id, transactions.type, transactions.amount_minor,
+                        transactions.account_id, transactions.category_id, transactions.merchant,
+                        transactions.note, transactions.occurred_at, transactions.source,
+                        transactions.ledger_id, transactions.currency_key, transactions.base_amount_minor,
+                        ledgers.base_currency_key, transactions.exchange_id, transactions.transfer_direction
+                    FROM transactions
+                    INNER JOIN ledgers ON ledgers.id = transactions.ledger_id
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql("DROP TABLE transactions")
+                connection.executeMigrationSql("ALTER TABLE transactions_new RENAME TO transactions")
+                connection.executeMigrationSql("CREATE INDEX index_transactions_account_id ON transactions (account_id)")
+                connection.executeMigrationSql("CREATE INDEX index_transactions_category_id ON transactions (category_id)")
+                connection.executeMigrationSql("CREATE INDEX index_transactions_occurred_at ON transactions (occurred_at)")
+                connection.executeMigrationSql("CREATE INDEX index_transactions_currency_key ON transactions (currency_key)")
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_transactions_base_currency_key ON transactions (base_currency_key)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_transactions_ledger_id_occurred_at_id ON transactions (ledger_id, occurred_at, id)",
+                )
+            }
+        }
+
+        internal val MIGRATION_16_17 = object : Migration(16, 17) {
+            /** 把交易原币金额与账户实际变动金额拆开，旧流水沿用原金额作为账户金额。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE transactions ADD COLUMN account_amount_minor INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "UPDATE transactions SET account_amount_minor = amount_minor",
+                )
+            }
+        }
+
+        internal val MIGRATION_17_18 = object : Migration(17, 18) {
+            /** 为应用设置补充默认关闭的收支金额颜色开关。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN colored_transaction_amounts_enabled INTEGER NOT NULL DEFAULT 0",
                 )
             }
         }

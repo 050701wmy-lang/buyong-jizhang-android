@@ -19,7 +19,7 @@ data class BackupMediaRef(
 /** 版本化的全量备份数据，覆盖全部八张持久化表与媒体引用。 */
 @Serializable
 data class BackupData(
-    val formatVersion: Int = 1,
+    val formatVersion: Int = 3,
     val createdAt: Long,
     val accounts: List<AccountEntity> = emptyList(),
     val ledgers: List<LedgerEntity> = emptyList(),

@@ -57,6 +57,8 @@ enum class AccountType {
 data class TransactionDraft(
     val type: TransactionType,
     val amountMinor: Long,
+    val currencyKey: String = "",
+    val accountAmountMinor: Long = 0,
     val accountId: Long,
     val categoryId: Long,
     val merchant: String,

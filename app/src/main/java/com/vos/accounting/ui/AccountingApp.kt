@@ -246,6 +246,7 @@ fun AccountingApp() {
                                 currency = currency,
                                 transactions = uiState.transactions,
                                 balanceTransactions = uiState.allTransactions,
+                                coloredTransactionAmountsEnabled = uiState.coloredTransactionAmountsEnabled,
                                 backdrop = backdrop,
                                 onBack = { backStack.removeAt(backStack.lastIndex) },
                                 onEditAccount = { navigateTo(AccountEditorRoute(it)) },
@@ -279,10 +280,10 @@ fun AccountingApp() {
                         } else {
                             account.openingBalanceMinor + accountTransactions.sumOf {
                                 when {
-                                    it.type == TransactionType.INCOME -> it.amountMinor
+                                    it.type == TransactionType.INCOME -> it.accountAmountMinor
                                     it.type == TransactionType.TRANSFER &&
-                                        it.transferDirection == TransferDirection.IN -> it.amountMinor
-                                    else -> -it.amountMinor
+                                        it.transferDirection == TransferDirection.IN -> it.accountAmountMinor
+                                    else -> -it.accountAmountMinor
                                 }
                             }
                         }
@@ -434,6 +435,8 @@ fun AccountingApp() {
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
                             onPredictiveBackAnimationEnabledChange =
                                 viewModel::updatePredictiveBackAnimationEnabled,
+                            onColoredTransactionAmountsEnabledChange =
+                                viewModel::updateColoredTransactionAmountsEnabled,
                         )
                     }
                     entry<BackupRoute> {

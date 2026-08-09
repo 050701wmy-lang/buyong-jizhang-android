@@ -299,6 +299,35 @@ class AccountingDatabaseTest {
         assertEquals(stored?.baseAmountMinor, after?.baseAmountMinor)
     }
 
+    /** 验证跨币种账目分别固化交易原币、账户实际变动与本位币统计金额。 */
+    @Test
+    fun saveCrossCurrencyTransactionSeparatesAmountFacts() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val category = dao.observeCategories().first().first { it.type == TransactionType.EXPENSE }
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 1000,
+                currencyKey = "usd",
+                accountAmountMinor = 7200,
+                accountId = account.id,
+                categoryId = category.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        val stored = dao.findTransaction(id)!!
+        assertEquals(1000, stored.amountMinor)
+        assertEquals("usd", stored.currencyKey)
+        assertEquals(7200, stored.accountAmountMinor)
+        assertEquals(7200, stored.baseAmountMinor)
+        assertEquals("cny", stored.baseCurrencyKey)
+    }
+
     /**
      * 验证收支汇总按固化本位币金额统计。
      */
@@ -335,9 +364,38 @@ class AccountingDatabaseTest {
 
         val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
         val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
-        val totals = dao.observeOverviewTotals(1).first()
+        val totals = repository.overviewTotals.first()
         assertEquals(convertCurrencyMinor(10000, usdRate, cnyRate), totals.expenseMinor)
         assertEquals(0, totals.incomeMinor)
+    }
+
+    /** 验证修改账本本位币后按历史快照币种换算展示且不改写原流水。 */
+    @Test
+    fun changingLedgerBaseCurrencyKeepsHistoricalSnapshotMeaning() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val expenseCategory = dao.observeCategories().first().first { it.type == TransactionType.EXPENSE }
+        val id = repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 700,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+        val original = dao.findTransaction(id)!!
+        repository.updateLedger(dao.findLedger(1)!!.copy(baseCurrencyKey = "usd"))
+
+        val displayed = repository.transactions.first().single { it.id == id }
+        val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
+        val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
+        assertEquals("cny", original.baseCurrencyKey)
+        assertEquals(convertCurrencyMinor(original.baseAmountMinor, cnyRate, usdRate), displayed.baseAmountMinor)
+        assertEquals(original, dao.findTransaction(id))
     }
 
     /**
@@ -364,6 +422,8 @@ class AccountingDatabaseTest {
                 ledgerId = 1,
                 currencyKey = currencyKey,
                 baseAmountMinor = 50,
+                baseCurrencyKey = "cny",
+                accountAmountMinor = 100,
             ),
         )
 
@@ -440,7 +500,7 @@ class AccountingDatabaseTest {
         )
 
         // 兑换流水不计入普通收支汇总
-        val totals = dao.observeOverviewTotals(1).first()
+        val totals = repository.overviewTotals.first()
         assertEquals(0, totals.incomeMinor)
         assertEquals(0, totals.expenseMinor)
     }
@@ -633,6 +693,8 @@ class AccountingDatabaseTest {
                         ledgerId = ledgerIds[index % ledgerIds.size],
                         currencyKey = "cny",
                         baseAmountMinor = ((index % 1000) + 1).toLong(),
+                        baseCurrencyKey = "cny",
+                        accountAmountMinor = ((index % 1000) + 1).toLong(),
                     ),
                 )
             }
@@ -641,7 +703,8 @@ class AccountingDatabaseTest {
         assertEquals(10_000, dao.getAllTransactions().size)
         assertEquals(21, dao.getAllAccounts().size)
         assertEquals(5, dao.getAllLedgers().size)
-        val totals = dao.observeOverviewTotals(ledgerIds.first()).first()
+        dao.selectLedgerSafely(ledgerIds.first())
+        val totals = repository.overviewTotals.first()
         assertEquals(0, totals.incomeMinor)
         assertTrue(totals.expenseMinor > 0)
     }

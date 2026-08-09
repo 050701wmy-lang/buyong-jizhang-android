@@ -134,7 +134,7 @@ object BackupCodec {
         val jsonText = jsonBytes?.toString(Charsets.UTF_8)
             ?: throw BackupException("备份内容缺失")
         val data = json.decodeFromString(BackupData.serializer(), jsonText)
-        if (data.formatVersion != 1) throw BackupException("不支持的备份版本")
+        if (data.formatVersion !in 1..3) throw BackupException("不支持的备份版本")
         return ZipContent(data, media)
     }
 

@@ -118,6 +118,20 @@ internal const val LEDGER_HERO_ASPECT_RATIO = 21f / 9f
 /** 顶部数据 Hero Card 的统一内容内边距。 */
 internal val HERO_CARD_CONTENT_PADDING = 20.dp
 
+/** 支出金额启用颜色显示时使用的红色。 */
+internal val EXPENSE_AMOUNT_COLOR = Color(0xFFE5484D)
+
+/** 收入金额启用颜色显示时使用的绿色。 */
+internal val INCOME_AMOUNT_COLOR = Color(0xFF2E9B55)
+
+/** 按设置返回普通收支金额颜色，转账与币种兑换保持原色。 */
+internal fun transactionAmountColor(type: TransactionType, enabled: Boolean, defaultColor: Color): Color = when {
+    !enabled -> defaultColor
+    type == TransactionType.EXPENSE -> EXPENSE_AMOUNT_COLOR
+    type == TransactionType.INCOME -> INCOME_AMOUNT_COLOR
+    else -> defaultColor
+}
+
 /** 账本叠放中第一层背景卡片的缩放比例。 */
 private const val LEDGER_STACK_NEAR_BACKGROUND_SCALE = 0.986f
 
@@ -241,16 +255,22 @@ fun HomeScreen(
         }
         return
     }
-    val ledgerSummaries = remember(availableLedgers, accountBalances, currencies) {
+    val accountIdsByLedger = remember(uiState.accountLedgerCrossRefs) {
+        uiState.accountLedgerCrossRefs.groupBy { it.ledgerId }
+            .mapValues { (_, refs) -> refs.mapTo(mutableSetOf()) { it.accountId } }
+    }
+    val ledgerSummaries = remember(availableLedgers, accountBalances, currencies, accountIdsByLedger) {
         availableLedgers.associate { visibleLedger ->
             val baseCurrency = currencies.getValue(visibleLedger.baseCurrencyKey)
-            val convertedBalances = accountBalances.mapValues { (account, balance) ->
-                convertCurrencyMinor(
-                    balance,
-                    currencies.getValue(account.currencyKey).rateToCnyScaled,
-                    baseCurrency.rateToCnyScaled,
-                )
-            }
+            val convertedBalances = accountBalances
+                .filterKeys { it.id in accountIdsByLedger[visibleLedger.id].orEmpty() }
+                .mapValues { (account, balance) ->
+                    convertCurrencyMinor(
+                        balance,
+                        currencies.getValue(account.currencyKey).rateToCnyScaled,
+                        baseCurrency.rateToCnyScaled,
+                    )
+                }
             val totalAssets = convertedBalances.values.sumOf { maxOf(it, 0L) }
             val totalLiabilities = convertedBalances.values.sumOf { -minOf(it, 0L) }
             visibleLedger.id to LedgerAssetSummary(
@@ -282,6 +302,9 @@ fun HomeScreen(
             onSelectLedger(ledgerId)
         }
     }
+    val displayedAccounts = activeAccounts.filter {
+        it.id in accountIdsByLedger[displayedLedgerId].orEmpty()
+    }
 
     MainTabList(innerPadding = innerPadding) {
         item {
@@ -292,19 +315,24 @@ fun HomeScreen(
                 onSelectLedger = selectDisplayedLedger,
             )
         }
-        uiState.accountTypes.forEach { type ->
-            val accounts = activeAccounts.filter { it.typeKey == type.key }
-            if (accounts.isNotEmpty()) {
-                item(key = type.key) {
-                    HomeAccountGroup(
-                        modifier = Modifier.animateItem(),
-                        type = type,
-                        accounts = accounts,
-                        balances = accountBalances,
-                        cnyBalances = cnyBalances,
-                        currencies = currencies,
-                        onOpenAccount = onOpenAccount,
-                    )
+        if (displayedAccounts.isEmpty()) {
+            item { EmptyCard(text = "当前账本暂无账户") }
+        } else {
+            uiState.accountTypes.forEach { type ->
+                val accounts = displayedAccounts.filter { it.typeKey == type.key }
+                if (accounts.isNotEmpty()) {
+                    item(key = type.key) {
+                        HomeAccountGroup(
+                            modifier = Modifier.animateItem(),
+                            type = type,
+                            accounts = accounts,
+                            balances = accountBalances,
+                            cnyBalances = cnyBalances,
+                            currencies = currencies,
+                            baseCurrency = baseCurrency,
+                            onOpenAccount = onOpenAccount,
+                        )
+                    }
                 }
             }
         }
@@ -800,6 +828,7 @@ private fun HomeAccountGroup(
     balances: Map<AccountEntity, Long>,
     cnyBalances: Map<AccountEntity, Long>,
     currencies: Map<String, CurrencyEntity>,
+    baseCurrency: CurrencyEntity,
     onOpenAccount: (Long) -> Unit,
 ) {
     var expanded by rememberSaveable(type.key) { mutableStateOf(true) }
@@ -853,6 +882,8 @@ private fun HomeAccountGroup(
                         account = account,
                         balance = balances.getValue(account),
                         currencySymbol = currencies.getValue(account.currencyKey).symbol,
+                        convertedBalance = cnyBalances.getValue(account),
+                        baseCurrency = baseCurrency,
                         onClick = { onOpenAccount(account.id) },
                     )
                 }
@@ -869,6 +900,8 @@ private fun HomeAccountRow(
     account: AccountEntity,
     balance: Long,
     currencySymbol: String,
+    convertedBalance: Long,
+    baseCurrency: CurrencyEntity,
     onClick: () -> Unit,
 ) {
     Row(
@@ -902,11 +935,21 @@ private fun HomeAccountRow(
                 .padding(start = 12.dp),
             style = MiuixTheme.textStyles.body1,
         )
-        Text(
-            text = formatCurrencyAmount(balance, currencySymbol),
-            fontWeight = FontWeight.Medium,
-            style = MiuixTheme.textStyles.body1,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = formatCurrencyAmount(balance, currencySymbol),
+                fontWeight = FontWeight.Medium,
+                style = MiuixTheme.textStyles.body1,
+            )
+            if (account.currencyKey != baseCurrency.key) {
+                Text(
+                    text = "≈ ${formatCurrencyAmount(convertedBalance, baseCurrency.symbol)}",
+                    modifier = Modifier.padding(top = 3.dp),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.footnote1,
+                )
+            }
+        }
     }
 }
 
@@ -920,10 +963,10 @@ private fun calculateAccountBalance(
     .filter { it.accountId == account.id }
     .sumOf { record ->
         when {
-            record.type == TransactionType.INCOME -> record.amountMinor
+            record.type == TransactionType.INCOME -> record.accountAmountMinor
             record.type == TransactionType.TRANSFER &&
-                record.transferDirection == TransferDirection.IN -> record.amountMinor
-            else -> -record.amountMinor
+                record.transferDirection == TransferDirection.IN -> record.accountAmountMinor
+            else -> -record.accountAmountMinor
         }
     }
 
@@ -946,9 +989,14 @@ fun DetailsScreen(
     }
     val today = LocalDate.now()
     val currentMonth = YearMonth.from(today)
+    val exchangeSources = remember(uiState.transactions) {
+        uiState.transactions
+            .filter { it.transferDirection == TransferDirection.OUT && it.exchangeId != null }
+            .associateBy { it.exchangeId!! }
+    }
     val recordsByDate = remember(uiState.transactions) {
         uiState.transactions
-            .filter { it.type != TransactionType.TRANSFER }
+            .filter { it.transferDirection != TransferDirection.OUT }
             .groupBy(::detailsRecordDate)
             .entries
             .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
@@ -996,7 +1044,10 @@ fun DetailsScreen(
                     DetailsDateGroup(
                         date = entry.key,
                         records = entry.value,
+                        baseCurrencyKey = baseCurrency.key,
                         baseCurrencySymbol = baseCurrency.symbol,
+                        exchangeSources = exchangeSources,
+                        coloredTransactionAmountsEnabled = uiState.coloredTransactionAmountsEnabled,
                         onEditTransaction = onEditTransaction,
                     )
                 }
@@ -1108,7 +1159,10 @@ private fun DetailsSummaryMetric(
 private fun DetailsDateGroup(
     date: LocalDate,
     records: List<TransactionRecord>,
+    baseCurrencyKey: String,
     baseCurrencySymbol: String,
+    exchangeSources: Map<Long, TransactionRecord>,
+    coloredTransactionAmountsEnabled: Boolean,
     onEditTransaction: (Long) -> Unit,
 ) {
     val expense = records
@@ -1146,6 +1200,10 @@ private fun DetailsDateGroup(
         records.forEach { record ->
             DetailsTransactionRow(
                 record = record,
+                baseCurrencyKey = baseCurrencyKey,
+                baseCurrencySymbol = baseCurrencySymbol,
+                exchangeSource = record.exchangeId?.let(exchangeSources::get),
+                coloredTransactionAmountsEnabled = coloredTransactionAmountsEnabled,
                 onClick = { onEditTransaction(record.id) },
             )
         }
@@ -1158,12 +1216,17 @@ private fun DetailsDateGroup(
 @Composable
 private fun DetailsTransactionRow(
     record: TransactionRecord,
+    baseCurrencyKey: String,
+    baseCurrencySymbol: String,
+    exchangeSource: TransactionRecord?,
+    coloredTransactionAmountsEnabled: Boolean,
     onClick: () -> Unit,
 ) {
+    val isTransfer = record.type == TransactionType.TRANSFER
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = !isTransfer, onClick = onClick)
             .padding(
                 horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
                 vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
@@ -1179,11 +1242,19 @@ private fun DetailsTransactionRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            val iconOption = categoryIconOption(record.categoryIconKey, record.categoryName)
-            CategoryIcon(
-                option = iconOption,
-                modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
-            )
+            if (isTransfer) {
+                Icon(
+                    imageVector = MiuixIcons.Basic.ArrowUpDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
+                    tint = MiuixTheme.colorScheme.primary,
+                )
+            } else {
+                CategoryIcon(
+                    option = categoryIconOption(record.categoryIconKey, record.categoryName),
+                    modifier = Modifier.size(GROUPED_CARD_ICON_SIZE),
+                )
+            }
         }
         Column(
             modifier = Modifier
@@ -1191,7 +1262,7 @@ private fun DetailsTransactionRow(
                 .padding(start = 12.dp),
         ) {
             Text(
-                text = record.merchant.ifBlank { record.categoryName },
+                text = if (isTransfer) "币种兑换" else record.merchant.ifBlank { record.categoryName },
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 style = MiuixTheme.textStyles.body1,
@@ -1204,16 +1275,42 @@ private fun DetailsTransactionRow(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        Text(
-            text = if (record.type == TransactionType.EXPENSE) {
-                "-${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
-            } else {
-                "+${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
-            },
+        val sign = if (record.type == TransactionType.EXPENSE) "-" else "+"
+        Column(
             modifier = Modifier.padding(start = 12.dp),
-            fontWeight = FontWeight.Bold,
-            style = MiuixTheme.textStyles.body1,
-        )
+            horizontalAlignment = Alignment.End,
+        ) {
+            Text(
+                text = if (exchangeSource == null) {
+                    "$sign${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
+                } else {
+                    formatCurrencyAmount(exchangeSource.amountMinor, exchangeSource.currencySymbol)
+                },
+                fontWeight = FontWeight.Bold,
+                color = transactionAmountColor(
+                    type = record.type,
+                    enabled = coloredTransactionAmountsEnabled,
+                    defaultColor = MiuixTheme.colorScheme.onSurface,
+                ),
+                style = MiuixTheme.textStyles.body1,
+            )
+            if (exchangeSource != null || record.currencyKey != baseCurrencyKey) {
+                Text(
+                    text = if (exchangeSource == null) {
+                        "≈ $sign${formatCurrencyAmount(record.baseAmountMinor, baseCurrencySymbol)}"
+                    } else {
+                        "→ ${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
+                    },
+                    modifier = Modifier.padding(top = 3.dp),
+                    color = transactionAmountColor(
+                        type = record.type,
+                        enabled = coloredTransactionAmountsEnabled,
+                        defaultColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    ),
+                    style = MiuixTheme.textStyles.footnote1,
+                )
+            }
+        }
     }
 }
 
@@ -1266,6 +1363,7 @@ fun SettingsScreen(
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
     onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
+    onColoredTransactionAmountsEnabledChange: (Boolean) -> Unit,
 ) {
     var showThemePopup by rememberSaveable { mutableStateOf(false) }
     SecondaryScaffold(
@@ -1327,6 +1425,13 @@ fun SettingsScreen(
                         onCheckedChange = onPredictiveBackAnimationEnabledChange,
                         title = "预测性返回动画",
                         summary = "开启后边缘返回会随手势移动",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.coloredTransactionAmountsEnabled,
+                        onCheckedChange = onColoredTransactionAmountsEnabledChange,
+                        title = "收支金额颜色",
+                        summary = "支出红色收入绿色",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

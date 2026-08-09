@@ -71,6 +71,8 @@ class BackupManagerTest {
                 ledgerId = 1,
                 currencyKey = "cny",
                 baseAmountMinor = 100,
+                baseCurrencyKey = "cny",
+                accountAmountMinor = 100,
             ),
         )
 

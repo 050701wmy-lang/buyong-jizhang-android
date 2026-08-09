@@ -73,26 +73,40 @@ fun AccountDetailScreen(
     currency: CurrencyEntity,
     transactions: List<TransactionRecord>,
     balanceTransactions: List<TransactionRecord>,
+    coloredTransactionAmountsEnabled: Boolean,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
     onEditAccount: (Long) -> Unit,
     onEditTransaction: (Long) -> Unit,
     onAddTransaction: () -> Unit,
 ) {
-    val accountTransactions = transactions.filter { it.accountId == account.id }
+    val accountIds = linkedAccountIds(
+        accountId = account.id,
+        exchangeAccountIds = balanceTransactions
+            .filter { it.exchangeId != null }
+            .groupBy(TransactionRecord::exchangeId)
+            .values
+            .map { records -> records.map(TransactionRecord::accountId).toSet() },
+    )
+    val exchangeSources = transactions
+        .filter { it.transferDirection == TransferDirection.OUT && it.exchangeId != null }
+        .associateBy { it.exchangeId!! }
+    val accountTransactions = transactions.filter {
+        it.accountId in accountIds && it.transferDirection != TransferDirection.OUT
+    }
     val accountBalanceTransactions = balanceTransactions.filter { it.accountId == account.id }
     val income = accountBalanceTransactions
         .filter { it.type == TransactionType.INCOME }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::accountAmountMinor)
     val expense = accountBalanceTransactions
         .filter { it.type == TransactionType.EXPENSE }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::accountAmountMinor)
     val transferIn = accountBalanceTransactions
         .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::accountAmountMinor)
     val transferOut = accountBalanceTransactions
         .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.OUT }
-        .sumOf(TransactionRecord::amountMinor)
+        .sumOf(TransactionRecord::accountAmountMinor)
     val balance = account.openingBalanceMinor + income + transferIn - expense - transferOut
     val monthlyTransactions = accountTransactions
         .groupBy(::accountRecordMonth)
@@ -173,9 +187,10 @@ fun AccountDetailScreen(
                         monthlyTransactions.forEach { entry ->
                             item(key = entry.key.toString()) {
                                 AccountMonthCard(
-                                    currencySymbol = currency.symbol,
                                     month = entry.key,
                                     records = entry.value,
+                                    exchangeSources = exchangeSources,
+                                    coloredTransactionAmountsEnabled = coloredTransactionAmountsEnabled,
                                     onEditTransaction = onEditTransaction,
                                 )
                             }
@@ -323,21 +338,18 @@ private fun AccountBalanceCard(
 private fun AccountMonthCard(
     month: YearMonth,
     records: List<TransactionRecord>,
-    currencySymbol: String,
+    exchangeSources: Map<Long, TransactionRecord>,
+    coloredTransactionAmountsEnabled: Boolean,
     onEditTransaction: (Long) -> Unit,
 ) {
-    val inflow = records
-        .filter {
-            it.type == TransactionType.INCOME ||
-                (it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN)
-        }
-        .sumOf(TransactionRecord::amountMinor)
-    val outflow = records
-        .filter {
-            it.type == TransactionType.EXPENSE ||
-                (it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.OUT)
-        }
-        .sumOf(TransactionRecord::amountMinor)
+    val summaryRecords = records.filter { it.type != TransactionType.TRANSFER }
+    val summaryCurrencySymbols = summaryRecords.map(TransactionRecord::accountCurrencySymbol).distinct()
+    val inflow = summaryRecords
+        .filter { it.type == TransactionType.INCOME }
+        .sumOf(TransactionRecord::accountAmountMinor)
+    val outflow = summaryRecords
+        .filter { it.type == TransactionType.EXPENSE }
+        .sumOf(TransactionRecord::accountAmountMinor)
     Card(
         modifier = Modifier
             .padding(horizontal = 12.dp)
@@ -357,16 +369,20 @@ private fun AccountMonthCard(
                 fontWeight = FontWeight.Bold,
                 style = MiuixTheme.textStyles.body1,
             )
-            Text(
-                text = "流入 ${formatCurrencyAmount(inflow, currencySymbol)}  流出 ${formatCurrencyAmount(outflow, currencySymbol)}",
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.footnote1,
-            )
+            summaryCurrencySymbols.singleOrNull()?.let { currencySymbol ->
+                Text(
+                    text = "流入 ${formatCurrencyAmount(inflow, currencySymbol)}  流出 ${formatCurrencyAmount(outflow, currencySymbol)}",
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.footnote1,
+                )
+            }
         }
         HorizontalDivider(modifier = Modifier.padding(horizontal = GROUPED_CARD_HORIZONTAL_PADDING))
         records.forEach { record ->
             AccountTransactionRow(
                 record = record,
+                exchangeSource = record.exchangeId?.let(exchangeSources::get),
+                coloredTransactionAmountsEnabled = coloredTransactionAmountsEnabled,
                 onClick = { onEditTransaction(record.id) },
             )
         }
@@ -379,6 +395,8 @@ private fun AccountMonthCard(
 @Composable
 private fun AccountTransactionRow(
     record: TransactionRecord,
+    exchangeSource: TransactionRecord?,
+    coloredTransactionAmountsEnabled: Boolean,
     onClick: () -> Unit,
 ) {
     val isTransfer = record.type == TransactionType.TRANSFER
@@ -426,7 +444,7 @@ private fun AccountTransactionRow(
                 .padding(start = 12.dp),
         ) {
             Text(
-                text = record.merchant.ifBlank { record.categoryName },
+                text = if (isTransfer) "币种兑换" else record.merchant.ifBlank { record.categoryName },
                 fontWeight = FontWeight.Medium,
                 style = MiuixTheme.textStyles.body1,
             )
@@ -437,19 +455,56 @@ private fun AccountTransactionRow(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        Text(
-            text = if (
-                record.type == TransactionType.EXPENSE ||
-                (record.type == TransactionType.TRANSFER && record.transferDirection == TransferDirection.OUT)
+        val sign = if (record.type == TransactionType.EXPENSE) "-" else "+"
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = if (exchangeSource == null) {
+                    "$sign${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
+                } else {
+                    formatCurrencyAmount(exchangeSource.amountMinor, exchangeSource.currencySymbol)
+                },
+                fontWeight = FontWeight.Bold,
+                color = transactionAmountColor(
+                    type = record.type,
+                    enabled = coloredTransactionAmountsEnabled,
+                    defaultColor = MiuixTheme.colorScheme.onSurface,
+                ),
+                style = MiuixTheme.textStyles.body1,
+            )
+            if (exchangeSource != null ||
+                record.currencyKey != record.accountCurrencyKey ||
+                record.amountMinor != record.accountAmountMinor
             ) {
-                "-${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
-            } else {
-                "+${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
-            },
-            fontWeight = FontWeight.Bold,
-            style = MiuixTheme.textStyles.body1,
-        )
+                Text(
+                    text = if (exchangeSource == null) {
+                        "$sign${formatCurrencyAmount(record.accountAmountMinor, record.accountCurrencySymbol)}"
+                    } else {
+                        "→ ${formatCurrencyAmount(record.amountMinor, record.currencySymbol)}"
+                    },
+                    modifier = Modifier.padding(top = 3.dp),
+                    color = transactionAmountColor(
+                        type = record.type,
+                        enabled = coloredTransactionAmountsEnabled,
+                        defaultColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    ),
+                    style = MiuixTheme.textStyles.footnote1,
+                )
+            }
+        }
     }
+}
+
+/** 返回与指定账户通过币种兑换记录相连的全部历史账户。 */
+internal fun linkedAccountIds(accountId: Long, exchangeAccountIds: List<Set<Long>>): Set<Long> {
+    val result = mutableSetOf(accountId)
+    var changed: Boolean
+    do {
+        changed = false
+        exchangeAccountIds.filter { group -> group.any(result::contains) }.forEach { group ->
+            if (result.addAll(group)) changed = true
+        }
+    } while (changed)
+    return result
 }
 
 /**

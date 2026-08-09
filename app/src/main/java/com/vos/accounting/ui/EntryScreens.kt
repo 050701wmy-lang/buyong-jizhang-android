@@ -68,6 +68,7 @@ import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.TransactionRecord
+import com.vos.accounting.data.convertCurrencyMinor
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionSource
@@ -94,6 +95,7 @@ import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
+import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Add
 import top.yukonga.miuix.kmp.icon.extended.ChevronForward
@@ -145,6 +147,9 @@ fun ManualEntryScreen(
     var amountExpression by rememberSaveable(transaction?.id) {
         mutableStateOf(transaction?.amountMinor?.let(::manualFixedAmountText).orEmpty())
     }
+    var accountAmountExpression by rememberSaveable(transaction?.id) {
+        mutableStateOf(transaction?.accountAmountMinor?.let(::manualFixedAmountText).orEmpty())
+    }
     var note by rememberSaveable(transaction?.id, stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(transaction?.note.orEmpty()))
     }
@@ -157,6 +162,14 @@ fun ManualEntryScreen(
     var accountId by rememberSaveable(transaction?.id, initialAccountId) {
         mutableStateOf(transaction?.accountId ?: initialAccountId)
     }
+    var currencyKey by rememberSaveable(transaction?.id) {
+        mutableStateOf(transaction?.currencyKey.orEmpty())
+    }
+    var currencyManuallySelected by rememberSaveable(transaction?.id) {
+        mutableStateOf(transaction != null)
+    }
+    var editingAccountAmount by rememberSaveable(transaction?.id) { mutableStateOf(false) }
+    var conversionInitialized by rememberSaveable(transaction?.id) { mutableStateOf(false) }
     var ledgerId by rememberSaveable(transaction?.id, initialAccountId) {
         mutableStateOf(
             transaction?.ledgerId
@@ -183,6 +196,7 @@ fun ManualEntryScreen(
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var showLedgerPicker by rememberSaveable { mutableStateOf(false) }
+    var showCurrencyPicker by rememberSaveable { mutableStateOf(false) }
     var occurredAt by rememberSaveable(transaction?.id) {
         mutableStateOf(transaction?.occurredAt ?: System.currentTimeMillis())
     }
@@ -199,11 +213,12 @@ fun ManualEntryScreen(
         it.id in linkedAccountIds && (!it.isArchived || it.id == transaction?.accountId)
     }
     val amountMinor = calculateManualAmount(amountExpression)
-    val currencySymbol = uiState.accounts
-        .firstOrNull { it.id == accountId }
-        ?.let { account -> uiState.currencies.firstOrNull { it.key == account.currencyKey } }
-        ?.symbol
-        ?: "¥"
+    val selectedAccount = uiState.accounts.firstOrNull { it.id == accountId }
+    val accountCurrency = uiState.currencies.firstOrNull { it.key == selectedAccount?.currencyKey }
+    val transactionCurrency = uiState.currencies.firstOrNull { it.key == currencyKey }
+    val usesAccountCurrency = transactionCurrency?.key == accountCurrency?.key
+    val accountAmountMinor = if (usesAccountCurrency) amountMinor else calculateManualAmount(accountAmountExpression)
+    val currencySymbol = transactionCurrency?.symbol ?: accountCurrency?.symbol ?: "¥"
 
     LaunchedEffect(selectableLedgers) {
         if (selectableLedgers.none { it.id == ledgerId }) {
@@ -225,6 +240,30 @@ fun ManualEntryScreen(
             accountId = selectableAccounts.firstOrNull(AccountEntity::isDefault)?.id
                 ?: selectableAccounts.firstOrNull()?.id
                 ?: 0
+        }
+    }
+    LaunchedEffect(accountId, accountCurrency?.key) {
+        if (transaction == null && !currencyManuallySelected) {
+            currencyKey = accountCurrency?.key.orEmpty()
+        }
+    }
+    LaunchedEffect(amountMinor, currencyKey, accountCurrency?.key) {
+        if (amountMinor == null || transactionCurrency == null || accountCurrency == null) {
+            return@LaunchedEffect
+        }
+        if (transaction != null && !conversionInitialized) {
+            conversionInitialized = true
+        } else {
+            conversionInitialized = true
+            if (!usesAccountCurrency) {
+                accountAmountExpression = runCatching {
+                    convertCurrencyMinor(
+                        amountMinor,
+                        transactionCurrency.rateToCnyScaled,
+                        accountCurrency.rateToCnyScaled,
+                    )
+                }.getOrNull()?.let(::manualFixedAmountText).orEmpty()
+            }
         }
     }
     LaunchedEffect(type, matchingCategories) {
@@ -252,6 +291,10 @@ fun ManualEntryScreen(
             categoryId = categoryId,
             accounts = selectableAccounts,
             accountId = accountId,
+            currencyName = transactionCurrency?.name.orEmpty(),
+            accountAmountText = if (usesAccountCurrency) null else {
+                "${accountCurrency?.symbol.orEmpty()} ${accountAmountExpression.ifBlank { "0.00" }}"
+            },
             note = note,
             merchant = merchant,
             occurredAt = occurredAt,
@@ -259,6 +302,8 @@ fun ManualEntryScreen(
                 selectableLedgers.any { it.id == ledgerId } &&
                 selectableAccounts.any { it.id == accountId } &&
                 matchingCategories.any { it.id == categoryId } &&
+                transactionCurrency != null &&
+                accountAmountMinor != null &&
                 !uiState.writeInProgress,
             writeInProgress = uiState.writeInProgress,
             editMode = transaction != null,
@@ -266,21 +311,43 @@ fun ManualEntryScreen(
             onSelectType = { type = it },
             onSelectCategory = { categoryId = it },
             onSelectAccount = { accountId = it },
+            onSelectCurrency = { showCurrencyPicker = true },
+            onEditAccountAmount = {
+                editingAccountAmount = true
+                keypadVisible = true
+            },
             onAddAccount = { onAddAccount(ledgerId) },
             onAddCategory = { showCategoryDialog = true },
             onNoteChange = { note = it },
             onMerchantChange = { merchant = it },
             onOccurredAtChange = { occurredAt = it },
-            onShowKeypad = { keypadVisible = true },
+            onShowKeypad = {
+                editingAccountAmount = false
+                keypadVisible = true
+            },
             onHideKeypad = { keypadVisible = false },
-            onAmountKey = { amountExpression = appendManualAmountKey(amountExpression, it) },
-            onAmountDelete = { amountExpression = amountExpression.dropLast(1) },
+            onAmountKey = {
+                if (editingAccountAmount) {
+                    accountAmountExpression = appendManualAmountKey(accountAmountExpression, it)
+                } else {
+                    amountExpression = appendManualAmountKey(amountExpression, it)
+                }
+            },
+            onAmountDelete = {
+                if (editingAccountAmount) {
+                    accountAmountExpression = accountAmountExpression.dropLast(1)
+                } else {
+                    amountExpression = amountExpression.dropLast(1)
+                }
+            },
             onDelete = { showDeleteDialog = true },
             onSave = {
                 amountMinor?.let {
                     val draft = TransactionDraft(
                         type = type,
                         amountMinor = it,
+                        currencyKey = currencyKey,
+                        accountAmountMinor = accountAmountMinor ?: return@let,
                         accountId = accountId,
                         categoryId = categoryId,
                         merchant = merchant.text,
@@ -314,6 +381,17 @@ fun ManualEntryScreen(
         onManage = {
             showLedgerPicker = false
             onManageLedgers()
+        },
+    )
+    ManualCurrencyPickerSheet(
+        show = showCurrencyPicker,
+        currencies = uiState.currencies,
+        selectedKey = currencyKey,
+        onDismiss = { showCurrencyPicker = false },
+        onSelect = {
+            currencyManuallySelected = true
+            currencyKey = it
+            showCurrencyPicker = false
         },
     )
     CategoryEditorDialog(
@@ -353,6 +431,8 @@ private fun ManualEntryContent(
     categoryId: Long,
     accounts: List<AccountEntity>,
     accountId: Long,
+    currencyName: String,
+    accountAmountText: String?,
     note: TextFieldValue,
     merchant: TextFieldValue,
     occurredAt: Long,
@@ -363,6 +443,8 @@ private fun ManualEntryContent(
     onSelectType: (TransactionType) -> Unit,
     onSelectCategory: (Long) -> Unit,
     onSelectAccount: (Long) -> Unit,
+    onSelectCurrency: () -> Unit,
+    onEditAccountAmount: () -> Unit,
     onAddAccount: () -> Unit,
     onAddCategory: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
@@ -432,11 +514,15 @@ private fun ManualEntryContent(
             ManualDetailRows(
                 accounts = accounts,
                 accountId = accountId,
+                currencyName = currencyName,
+                accountAmountText = accountAmountText,
                 occurredAt = occurredAt,
                 note = note,
                 merchant = merchant,
                 onOccurredAtChange = onOccurredAtChange,
                 onSelectAccount = onSelectAccount,
+                onSelectCurrency = onSelectCurrency,
+                onEditAccountAmount = onEditAccountAmount,
                 onAddAccount = onAddAccount,
                 onNoteChange = onNoteChange,
                 onMerchantChange = onMerchantChange,
@@ -792,6 +878,7 @@ private fun ManualSelectionRow(
     icon: ImageVector,
     title: String,
     value: String,
+    isPlaceholder: Boolean,
     onClick: () -> Unit,
 ) {
     Row(
@@ -818,6 +905,11 @@ private fun ManualSelectionRow(
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 20.dp),
+            color = if (isPlaceholder) {
+                MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.45f)
+            } else {
+                MiuixTheme.colorScheme.onBackground
+            },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             style = MiuixTheme.textStyles.body2,
@@ -899,6 +991,51 @@ private fun ManualAccountPickerSheet(
     }
 }
 
+/** 以连续币种列表展示手动记账页的交易币种选择弹层。 */
+@Composable
+private fun ManualCurrencyPickerSheet(
+    show: Boolean,
+    currencies: List<CurrencyEntity>,
+    selectedKey: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    WindowBottomSheet(
+        show = show,
+        title = "选择交易币种",
+        onDismissRequest = onDismiss,
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(0.dp, 20.dp),
+        allowDismiss = true,
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Card(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                insideMargin = PaddingValues(0.dp),
+            ) {
+                currencies.forEach { currency ->
+                    BasicComponent(
+                        title = "${currency.symbol}  ${currency.name}",
+                        summary = currency.code.ifBlank { currency.symbol },
+                        endActions = {
+                            if (currency.key == selectedKey) {
+                                Icon(
+                                    imageVector = MiuixIcons.Ok,
+                                    contentDescription = "当前交易币种",
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MiuixTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                        onClick = { onSelect(currency.key) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp).navigationBarsPadding())
+        }
+    }
+}
+
 /**
  * 以账本封面网格展示手动记账页的账本选择弹层。
  */
@@ -950,11 +1087,15 @@ private fun ManualLedgerPickerSheet(
 private fun ManualDetailRows(
     accounts: List<AccountEntity>,
     accountId: Long,
+    currencyName: String,
+    accountAmountText: String?,
     occurredAt: Long,
     note: TextFieldValue,
     merchant: TextFieldValue,
     onOccurredAtChange: (Long) -> Unit,
     onSelectAccount: (Long) -> Unit,
+    onSelectCurrency: () -> Unit,
+    onEditAccountAmount: () -> Unit,
     onAddAccount: () -> Unit,
     onNoteChange: (TextFieldValue) -> Unit,
     onMerchantChange: (TextFieldValue) -> Unit,
@@ -974,12 +1115,37 @@ private fun ManualDetailRows(
         ManualSelectionRow(
             icon = MiuixIcons.Store,
             title = "账户",
-            value = accounts.firstOrNull { it.id == accountId }?.name.orEmpty(),
+            value = accounts.firstOrNull { it.id == accountId }?.name ?: "当前账本暂无账户",
+            isPlaceholder = accounts.isEmpty(),
             onClick = {
                 onInteraction()
                 showAccountPicker = true
             },
         )
+        HorizontalDivider()
+        ManualSelectionRow(
+            icon = MiuixIcons.Basic.ArrowUpDown,
+            title = "币种",
+            value = currencyName,
+            isPlaceholder = currencyName.isEmpty(),
+            onClick = {
+                onInteraction()
+                onSelectCurrency()
+            },
+        )
+        if (accountAmountText != null) {
+            HorizontalDivider()
+            ManualSelectionRow(
+                icon = MiuixIcons.Basic.ArrowUpDown,
+                title = "账户金额",
+                value = accountAmountText,
+                isPlaceholder = false,
+                onClick = {
+                    onInteraction()
+                    onEditAccountAmount()
+                },
+            )
+        }
         HorizontalDivider()
         Row(
             modifier = Modifier
@@ -1404,7 +1570,7 @@ private fun ManualSaveAction(
 }
 
 /**
- * 展示新增分类的名称与图标选择 Window Dialog。
+ * 展示新增分类的名称与图标选择底部弹层。
  */
 @Composable
 private fun CategoryEditorDialog(
@@ -1427,10 +1593,36 @@ private fun CategoryEditorDialog(
             duplicate = false
         }
     }
-    WindowDialog(
+    WindowBottomSheet(
         show = show,
         title = "添加分类",
+        endAction = {
+            Row(modifier = Modifier.padding(end = 20.dp)) {
+                IconButton(
+                    onClick = {
+                        onAdd(
+                            name.text,
+                            iconKey,
+                            onCreated,
+                            { duplicate = true },
+                        )
+                    },
+                    minWidth = 35.dp,
+                    minHeight = 35.dp,
+                    enabled = name.text.isNotBlank() && !writeInProgress,
+                ) {
+                    Icon(
+                        imageVector = MiuixIcons.Ok,
+                        contentDescription = "确认添加分类",
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            }
+        },
         onDismissRequest = onDismiss,
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(20.dp, 20.dp),
+        allowDismiss = !writeInProgress,
     ) {
         TextField(
             value = name,
@@ -1480,30 +1672,6 @@ private fun CategoryEditorDialog(
                         Spacer(modifier = Modifier.size(50.dp))
                     }
                 }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.weight(1f),
-                enabled = !writeInProgress,
-            ) {
-                Text(text = "取消")
-            }
-            Button(
-                onClick = {
-                    onAdd(
-                        name.text,
-                        iconKey,
-                        onCreated,
-                        { duplicate = true },
-                    )
-                },
-                modifier = Modifier.weight(1f),
-                enabled = name.text.isNotBlank() && !writeInProgress,
-                colors = ButtonDefaults.buttonColorsPrimary(),
-            ) {
-                Text(text = if (writeInProgress) "保存中…" else "确定")
             }
         }
     }

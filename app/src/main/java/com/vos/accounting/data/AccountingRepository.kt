@@ -5,12 +5,15 @@ import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.AccountType
+import com.vos.accounting.model.CategoryTotal
+import com.vos.accounting.model.OverviewTotals
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
 /**
@@ -34,10 +37,21 @@ class AccountingRepository(
     private val currentLedgerId: Flow<Long> = settings
         .map { it?.currentLedgerId ?: 1L }
         .distinctUntilChanged()
-    val transactions = currentLedgerId.flatMapLatest { dao.observeTransactions(it) }
-    val allTransactions = dao.observeAllTransactions()
-    val overviewTotals = currentLedgerId.flatMapLatest { dao.observeOverviewTotals(it) }
-    val expenseCategoryTotals = currentLedgerId.flatMapLatest { dao.observeExpenseCategoryTotals(it) }
+    private val storedTransactions = currentLedgerId.flatMapLatest { dao.observeTransactions(it) }
+    val transactions = combine(storedTransactions, ledgers, currencies, ::convertBaseAmounts)
+    val allTransactions = combine(dao.observeAllTransactions(), ledgers, currencies, ::convertBaseAmounts)
+    val overviewTotals = transactions.map { records ->
+        OverviewTotals(
+            incomeMinor = records.filter { it.type == TransactionType.INCOME }.sumOf(TransactionRecord::baseAmountMinor),
+            expenseMinor = records.filter { it.type == TransactionType.EXPENSE }.sumOf(TransactionRecord::baseAmountMinor),
+        )
+    }
+    val expenseCategoryTotals = transactions.map { records ->
+        records.filter { it.type == TransactionType.EXPENSE }
+            .groupBy(TransactionRecord::categoryName)
+            .map { (name, grouped) -> CategoryTotal(name, grouped.sumOf(TransactionRecord::baseAmountMinor)) }
+            .sortedByDescending(CategoryTotal::amountMinor)
+    }
 
     /** 提供数据库访问供备份恢复等基础设施使用。 */
     internal val accountingDao: AccountingDao get() = dao
@@ -90,6 +104,11 @@ class AccountingRepository(
         dao.updatePredictiveBackAnimationEnabled(enabled)
     }
 
+    /** 更新普通收支金额是否使用红绿字体。 */
+    suspend fun updateColoredTransactionAmountsEnabled(enabled: Boolean) {
+        dao.updateColoredTransactionAmountsEnabled(enabled)
+    }
+
     /**
      * 把已经确认的草稿写入正式账目。
      */
@@ -100,6 +119,7 @@ class AccountingRepository(
             TransactionEntity(
                 type = draft.type,
                 amountMinor = draft.amountMinor,
+                accountAmountMinor = snapshot.accountAmountMinor,
                 accountId = draft.accountId,
                 categoryId = draft.categoryId,
                 merchant = draft.merchant.trim(),
@@ -109,6 +129,7 @@ class AccountingRepository(
                 ledgerId = draft.ledgerId,
                 currencyKey = snapshot.currencyKey,
                 baseAmountMinor = snapshot.baseAmountMinor,
+                baseCurrencyKey = snapshot.baseCurrencyKey,
             ),
         )
     }
@@ -129,6 +150,7 @@ class AccountingRepository(
                 id = transactionId,
                 type = draft.type,
                 amountMinor = draft.amountMinor,
+                accountAmountMinor = snapshot.accountAmountMinor,
                 accountId = draft.accountId,
                 categoryId = draft.categoryId,
                 merchant = draft.merchant.trim(),
@@ -138,6 +160,7 @@ class AccountingRepository(
                 ledgerId = draft.ledgerId,
                 currencyKey = snapshot.currencyKey,
                 baseAmountMinor = snapshot.baseAmountMinor,
+                baseCurrencyKey = snapshot.baseCurrencyKey,
             ),
         )
         if (updated == 0) throw AccountingWriteException("账目不存在或已被删除")
@@ -490,30 +513,57 @@ class AccountingRepository(
             ?: throw AccountingWriteException("所选账户不存在")
         val ledger = dao.findLedger(ledgerId)
             ?: throw AccountingWriteException("所选账本不存在")
-        val currency = dao.findCurrency(account.currencyKey)
+        val transactionCurrency = dao.findCurrency(draft.currencyKey.ifBlank { account.currencyKey })
+            ?: throw AccountingWriteException("交易币种不存在")
+        val accountCurrency = dao.findCurrency(account.currencyKey)
             ?: throw AccountingWriteException("账户币种不存在")
         val baseCurrency = dao.findCurrency(ledger.baseCurrencyKey)
             ?: throw AccountingWriteException("账本位币不存在")
+        val accountAmountMinor = draft.accountAmountMinor.takeIf { it > 0 } ?: draft.amountMinor
         val baseAmountMinor = try {
             convertCurrencyMinor(
-                amountMinor = draft.amountMinor,
-                sourceRateToCnyScaled = currency.rateToCnyScaled,
+                amountMinor = accountAmountMinor,
+                sourceRateToCnyScaled = accountCurrency.rateToCnyScaled,
                 targetRateToCnyScaled = baseCurrency.rateToCnyScaled,
             )
         } catch (_: ArithmeticException) {
             throw AccountingWriteException("金额超出可计算范围")
         }
         return TransactionSnapshot(
-            currencyKey = currency.key,
+            currencyKey = transactionCurrency.key,
+            accountAmountMinor = accountAmountMinor,
             baseAmountMinor = baseAmountMinor,
+            baseCurrencyKey = baseCurrency.key,
         )
     }
 
     /** 表示账目写入时固化的币种与本位币金额快照。 */
     private data class TransactionSnapshot(
         val currencyKey: String,
+        val accountAmountMinor: Long,
         val baseAmountMinor: Long,
+        val baseCurrencyKey: String,
     )
+
+    /** 按账目历史本位币与账本当前本位币换算展示金额，币种未改变时保留原快照。 */
+    private fun convertBaseAmounts(
+        records: List<TransactionRecord>,
+        ledgers: List<LedgerRecord>,
+        currencies: List<CurrencyEntity>,
+    ): List<TransactionRecord> {
+        val ledgerCurrencies = ledgers.associate { it.id to it.baseCurrencyKey }
+        val rates = currencies.associate { it.key to it.rateToCnyScaled }
+        return records.map { record ->
+            val currentBaseCurrencyKey = ledgerCurrencies.getValue(record.ledgerId)
+            if (record.baseCurrencyKey == currentBaseCurrencyKey) record else record.copy(
+                baseAmountMinor = convertCurrencyMinor(
+                    record.baseAmountMinor,
+                    rates.getValue(record.baseCurrencyKey),
+                    rates.getValue(currentBaseCurrencyKey),
+                ),
+            )
+        }
+    }
 
     private suspend fun validateTransactionDraft(
         draft: TransactionDraft,
@@ -521,6 +571,9 @@ class AccountingRepository(
     ) {
         if (draft.amountMinor <= 0) throw AccountingWriteException("金额必须大于零")
         if (draft.amountMinor > MAX_AMOUNT_MINOR) throw AccountingWriteException("金额超出上限")
+        if (draft.accountAmountMinor < 0 || draft.accountAmountMinor > MAX_AMOUNT_MINOR) {
+            throw AccountingWriteException("账户金额超出上限")
+        }
         if (draft.occurredAt <= 0) throw AccountingWriteException("记账时间无效")
         val ledgerId = draft.ledgerId
         if (dao.findLedger(ledgerId) == null) {

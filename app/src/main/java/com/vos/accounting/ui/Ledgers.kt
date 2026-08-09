@@ -47,6 +47,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,9 +67,11 @@ import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.icon.extended.Add
+import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.squircle.squircleClip
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
+import top.yukonga.miuix.kmp.window.WindowBottomSheet
 
 /** 定义内置账本封面的标识与明暗倾向。 */
 data class LedgerCoverOption(
@@ -318,10 +321,28 @@ fun LedgerEditorScreen(
             item { Spacer(Modifier.height(24.dp).navigationBarsPadding()) }
         }
     }
-    WindowDialog(show = showCovers, title = "选择账本封面", onDismissRequest = { showCovers = false }) {
+    WindowBottomSheet(
+        show = showCovers,
+        title = "选择账本封面",
+        endAction = {
+            Row(modifier = Modifier.padding(end = 20.dp)) {
+                TopBarIconAction(
+                    icon = MiuixIcons.Photos,
+                    contentDescription = "从相册选择",
+                    onClick = { launcher.launch(arrayOf("image/*")) },
+                )
+            }
+        },
+        onDismissRequest = { showCovers = false },
+        cornerRadius = 30.dp,
+        insideMargin = DpSize(0.dp, 20.dp),
+        allowDismiss = true,
+    ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
-            modifier = Modifier.height(264.dp),
+            modifier = Modifier
+                .height(264.dp)
+                .padding(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -333,7 +354,6 @@ fun LedgerEditorScreen(
                 }
             }
         }
-        Button({ launcher.launch(arrayOf("image/*")) }, Modifier.fillMaxWidth().padding(top = 12.dp), colors = ButtonDefaults.buttonColorsPrimary()) { Text("从相册选择") }
     }
     LedgerCoverCropDialog(
         sourceKey = cropSourceKey,

@@ -9,6 +9,7 @@ import com.vos.accounting.data.LEDGER_COVER_FILE_PREFIX
 import com.vos.accounting.data.ACCOUNT_ICON_CUSTOM_PREFIX
 import com.vos.accounting.data.BACKUP_MEDIA_PREFIX
 import com.vos.accounting.data.LedgerEntity
+import com.vos.accounting.data.TransactionEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -85,7 +86,7 @@ class BackupManager(
             accounts = data.accounts.map { remapAccountIcon(it, mediaFiles) },
             categories = data.categories,
             crossRefs = data.accountLedgerCrossRefs,
-            transactions = data.transactions,
+            transactions = restoreTransactionSnapshots(data.transactions, data.ledgers),
             settings = data.settings,
         )
     }
@@ -97,6 +98,22 @@ class BackupManager(
         if (missing.isNotEmpty()) throw BackupException("备份媒体文件缺失")
         val total = mediaBytes.values.sumOf { it.size.toLong() }
         if (total > BackupCodec.MAX_TOTAL_MEDIA_BYTES) throw BackupException("备份媒体文件过大")
+    }
+
+    /** 为旧版备份中尚未保存历史本位币标识的账目补充当时可知的账本本位币。 */
+    private fun restoreTransactionSnapshots(
+        transactions: List<TransactionEntity>,
+        ledgers: List<LedgerEntity>,
+    ): List<TransactionEntity> {
+        val ledgerCurrencies = ledgers.associate { it.id to it.baseCurrencyKey }
+        return transactions.map { transaction ->
+            transaction.copy(
+                accountAmountMinor = transaction.accountAmountMinor.takeIf { it > 0 } ?: transaction.amountMinor,
+                baseCurrencyKey = transaction.baseCurrencyKey.ifEmpty {
+                    ledgerCurrencies.getValue(transaction.ledgerId)
+                },
+            )
+        }
     }
 
     private fun readLedgerCover(ledger: LedgerEntity): Pair<String, ByteArray>? {

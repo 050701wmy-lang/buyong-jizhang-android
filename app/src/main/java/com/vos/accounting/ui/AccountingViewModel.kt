@@ -55,6 +55,7 @@ data class AccountingUiState(
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
     val followSystemColor: Boolean = true,
     val predictiveBackAnimationEnabled: Boolean = false,
+    val coloredTransactionAmountsEnabled: Boolean = false,
 )
 
 /** 汇集账户、类型、币种及账本关联的响应式状态。 */
@@ -127,6 +128,7 @@ class AccountingViewModel(
             } ?: AccountingThemeMode.SYSTEM,
             followSystemColor = settings?.followSystemColor ?: true,
             predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
+            coloredTransactionAmountsEnabled = settings?.coloredTransactionAmountsEnabled ?: false,
             currentLedgerId = settings?.currentLedgerId ?: 1,
         )
     }.stateIn(
@@ -173,6 +175,13 @@ class AccountingViewModel(
     fun updatePredictiveBackAnimationEnabled(enabled: Boolean) {
         viewModelScope.launch {
             repository.updatePredictiveBackAnimationEnabled(enabled)
+        }
+    }
+
+    /** 更新普通收支金额是否使用红绿字体。 */
+    fun updateColoredTransactionAmountsEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateColoredTransactionAmountsEnabled(enabled)
         }
     }
 
