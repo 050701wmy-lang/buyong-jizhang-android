@@ -5,7 +5,6 @@ import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.AccountType
-import com.vos.accounting.model.CategoryTotal
 import com.vos.accounting.model.OverviewTotals
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -45,12 +44,6 @@ class AccountingRepository(
             incomeMinor = records.filter { it.type == TransactionType.INCOME }.sumOf(TransactionRecord::baseAmountMinor),
             expenseMinor = records.filter { it.type == TransactionType.EXPENSE }.sumOf(TransactionRecord::baseAmountMinor),
         )
-    }
-    val expenseCategoryTotals = transactions.map { records ->
-        records.filter { it.type == TransactionType.EXPENSE }
-            .groupBy(TransactionRecord::categoryName)
-            .map { (name, grouped) -> CategoryTotal(name, grouped.sumOf(TransactionRecord::baseAmountMinor)) }
-            .sortedByDescending(CategoryTotal::amountMinor)
     }
 
     /** 提供数据库访问供备份恢复等基础设施使用。 */

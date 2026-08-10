@@ -234,7 +234,8 @@ private fun MainScaffold(
             pageCount = { MainTab.entries.size },
         )
     }
-    val coroutineScope = rememberCoroutineScope()
+    val pagerCoroutineScope = rememberCoroutineScope()
+    val activeTab = pagerState?.let { MainTab.entries[it.currentPage] } ?: selectedTab
     if (pagerState != null) {
         LaunchedEffect(pagerState.currentPage) {
             onSelectTab(MainTab.entries[pagerState.currentPage])
@@ -248,12 +249,12 @@ private fun MainScaffold(
             AccountingBlurTopBar(backdrop = backdrop) {
                 if (isWide) {
                     SmallTopAppBar(
-                        title = selectedTab.topBarTitle,
+                        title = activeTab.topBarTitle,
                         color = Color.Transparent,
                         scrollBehavior = scrollBehavior,
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
-                            if (selectedTab == MainTab.HOME) {
+                            if (activeTab == MainTab.HOME) {
                                 TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
@@ -264,12 +265,12 @@ private fun MainScaffold(
                     )
                 } else {
                     TopAppBar(
-                        title = selectedTab.topBarTitle,
+                        title = activeTab.topBarTitle,
                         color = Color.Transparent,
                         scrollBehavior = scrollBehavior,
                         actionIconPadding = TOP_BAR_ACTION_END_PADDING,
                         actions = {
-                            if (selectedTab == MainTab.HOME) {
+                            if (activeTab == MainTab.HOME) {
                                 TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
@@ -290,9 +291,9 @@ private fun MainScaffold(
                 ) {
                     MainTab.entries.forEach { tab ->
                         NavigationBarItem(
-                            selected = selectedTab == tab,
+                            selected = activeTab == tab,
                             onClick = {
-                                coroutineScope.launch {
+                                pagerCoroutineScope.launch {
                                     pagerState?.animateScrollToPage(tab.ordinal)
                                 }
                             },

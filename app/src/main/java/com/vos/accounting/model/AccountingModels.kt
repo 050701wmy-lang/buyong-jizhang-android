@@ -83,13 +83,3 @@ data class OverviewTotals(
     val balanceMinor: Long
         get() = incomeMinor - expenseMinor
 }
-
-/**
- * 承载分类统计结果。
- */
-data class CategoryTotal(
-    @ColumnInfo(name = "category_name")
-    val categoryName: String,
-    @ColumnInfo(name = "amount_minor")
-    val amountMinor: Long,
-)

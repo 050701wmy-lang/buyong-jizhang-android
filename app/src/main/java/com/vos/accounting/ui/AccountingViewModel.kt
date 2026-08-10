@@ -15,8 +15,6 @@ import com.vos.accounting.data.LedgerEntity
 import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.TransactionRecord
-import com.vos.accounting.model.CategoryTotal
-import com.vos.accounting.model.OverviewTotals
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionType
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,8 +46,6 @@ data class AccountingUiState(
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionRecord> = emptyList(),
     val allTransactions: List<TransactionRecord> = emptyList(),
-    val totals: OverviewTotals = OverviewTotals(0, 0),
-    val expenseCategoryTotals: List<CategoryTotal> = emptyList(),
     val writeInProgress: Boolean = false,
     val writeError: String? = null,
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
@@ -92,9 +88,7 @@ class AccountingViewModel(
         accountState,
         repository.categories,
         repository.transactions,
-        repository.overviewTotals,
-        repository.expenseCategoryTotals,
-    ) { accountState, categories, transactions, totals, categoryTotals ->
+    ) { accountState, categories, transactions ->
         AccountingUiState(
             accounts = accountState.accounts,
             accountTypes = accountState.accountTypes,
@@ -103,8 +97,6 @@ class AccountingViewModel(
             accountLedgerCrossRefs = accountState.refs,
             categories = categories,
             transactions = transactions,
-            totals = totals,
-            expenseCategoryTotals = categoryTotals,
         )
     }
 
