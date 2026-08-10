@@ -16,6 +16,7 @@ const val MAX_RATE_TO_CNY_SCALED = 1_000_000_000_000L
 enum class TransactionType {
     EXPENSE,
     INCOME,
+    REFUND,
     TRANSFER,
 }
 
@@ -60,12 +61,15 @@ data class TransactionDraft(
     val currencyKey: String = "",
     val accountAmountMinor: Long = 0,
     val accountId: Long,
-    val categoryId: Long,
+    val categoryId: Long?,
     val merchant: String,
     val note: String,
     val occurredAt: Long,
     val source: TransactionSource,
     val ledgerId: Long = 1,
+    val destinationAccountId: Long? = null,
+    val destinationAmountMinor: Long? = null,
+    val refundOfTransactionId: Long? = null,
 )
 
 /**

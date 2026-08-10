@@ -27,7 +27,6 @@ import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -237,24 +236,10 @@ private fun MainScaffold(
         )
     }
     val pagerCoroutineScope = rememberCoroutineScope()
-    var requestedPage by remember(pagerState) {
-        mutableIntStateOf(pagerState?.currentPage ?: selectedTab.ordinal)
-    }
     val activeTab = pagerState?.let { MainTab.entries[it.currentPage] } ?: selectedTab
     if (pagerState != null) {
         LaunchedEffect(pagerState.currentPage) {
-            requestedPage = pagerState.currentPage
             onSelectTab(MainTab.entries[pagerState.currentPage])
-        }
-        LaunchedEffect(pagerState) {
-            snapshotFlow { pagerState.isScrollInProgress }.collect { isScrolling ->
-                if (!isScrolling &&
-                    (pagerState.currentPage != requestedPage ||
-                        pagerState.currentPageOffsetFraction != 0f)
-                ) {
-                    pagerState.scrollToPage(requestedPage)
-                }
-            }
         }
     }
     Scaffold(
@@ -309,10 +294,9 @@ private fun MainScaffold(
                         NavigationBarItem(
                             selected = activeTab == tab,
                             onClick = {
-                                requestedPage = tab.ordinal
                                 pagerCoroutineScope.launch {
                                     pagerState?.animateScrollToPage(
-                                        page = requestedPage,
+                                        page = tab.ordinal,
                                         animationSpec = tween(durationMillis = 300),
                                     )
                                 }

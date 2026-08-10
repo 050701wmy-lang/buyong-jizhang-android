@@ -1,12 +1,11 @@
 package com.vos.accounting.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +25,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -172,6 +174,7 @@ internal fun StatisticsReportContent(
             ReportChartCard(
                 title = "${period.currentTitle}趋势",
                 points = reportData.currentTrend,
+                showLineChart = true,
             )
         }
         item {
@@ -544,6 +547,7 @@ private fun ReportMetric(
 private fun ReportChartCard(
     title: String,
     points: List<ReportPoint>,
+    showLineChart: Boolean = false,
 ) {
     Card(
         modifier = Modifier
@@ -558,6 +562,8 @@ private fun ReportChartCard(
         )
         if (points.none { it.amountMinor > 0 }) {
             EmptyReportContent()
+        } else if (showLineChart) {
+            ReportLineChart(points = points)
         } else {
             ReportBarChart(points = points)
         }
@@ -565,65 +571,171 @@ private fun ReportChartCard(
 }
 
 /**
- * 使用真实聚合金额绘制 MIUIX squircle 柱状趋势图。
+ * 使用真实聚合金额绘制自适应卡片宽度的折线趋势图。
  */
 @Composable
-private fun ReportBarChart(points: List<ReportPoint>) {
+private fun ReportLineChart(points: List<ReportPoint>) {
     val maxAmount = points.maxOf(ReportPoint::amountMinor)
-    val chartWidth = max(336, points.size * 48).dp
-    val scrollState = rememberScrollState()
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        Box(
+    val primaryColor = MiuixTheme.colorScheme.primary
+    val gridColor = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.14f)
+    val labelColor = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val gridDivisions = 4
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(210.dp)
+            .padding(top = 18.dp),
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(
-                    state = scrollState,
-                    enabled = chartWidth > maxWidth,
-                ),
+                .weight(1f),
         ) {
-            Row(
+            Column(
                 modifier = Modifier
-                    .width(chartWidth)
-                    .height(210.dp)
-                    .padding(top = 18.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.Bottom,
+                    .width(52.dp)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
             ) {
-                points.forEach { point ->
-                    val fraction = point.amountMinor.toFloat() / maxAmount.toFloat()
-                    val barHeight = max(6f, 132f * fraction).dp
-                    Column(
-                        modifier = Modifier
-                            .width(42.dp)
-                            .fillMaxHeight(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Bottom,
-                    ) {
-                        Text(
-                            text = compactAmount(point.amountMinor),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            maxLines = 1,
-                            style = MiuixTheme.textStyles.footnote2,
+                (gridDivisions downTo 0).forEach { tick ->
+                    Text(
+                        text = compactAmount(maxAmount * tick / gridDivisions),
+                        color = labelColor,
+                        maxLines = 1,
+                        style = MiuixTheme.textStyles.footnote2,
+                    )
+                }
+            }
+            Canvas(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            ) {
+                val pointRadius = 3.5.dp.toPx()
+                val plotLeft = pointRadius
+                val plotRight = size.width - pointRadius
+                val plotTop = pointRadius
+                val plotBottom = size.height - pointRadius
+                repeat(gridDivisions + 1) { index ->
+                    val y = plotTop + (plotBottom - plotTop) * index / gridDivisions
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                val pointOffsets = points.mapIndexed { index, point ->
+                    Offset(
+                        x = plotLeft + (plotRight - plotLeft) * index / points.lastIndex,
+                        y = plotBottom -
+                            (plotBottom - plotTop) * point.amountMinor.toFloat() / maxAmount.toFloat(),
+                    )
+                }
+                val path = Path().apply {
+                    moveTo(pointOffsets.first().x, pointOffsets.first().y)
+                    for (index in 1 until pointOffsets.size) {
+                        val previous = pointOffsets[index - 1]
+                        val current = pointOffsets[index]
+                        val controlX = (previous.x + current.x) / 2f
+                        cubicTo(
+                            controlX,
+                            previous.y,
+                            controlX,
+                            current.y,
+                            current.x,
+                            current.y,
                         )
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 5.dp)
-                                .width(28.dp)
-                                .height(barHeight)
-                                .squircleBackground(
-                                    color = MiuixTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                    cornerRadius = 8.dp,
-                                ),
-                        )
+                    }
+                }
+                drawPath(
+                    path = path,
+                    color = primaryColor,
+                    style = Stroke(
+                        width = 3.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    ),
+                )
+                pointOffsets.forEach { pointOffset ->
+                    drawCircle(
+                        color = primaryColor,
+                        radius = pointRadius,
+                        center = pointOffset,
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 52.dp, top = 7.dp),
+        ) {
+            points.forEachIndexed { index, point ->
+                Box(
+                    modifier = Modifier.weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (points.size <= 7 || index % 2 == 0) {
                         Text(
                             text = point.label,
-                            modifier = Modifier.padding(top = 7.dp),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            color = labelColor,
                             maxLines = 1,
                             style = MiuixTheme.textStyles.footnote2,
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 使用真实聚合金额绘制自适应卡片宽度的最近周期柱状图。
+ */
+@Composable
+private fun ReportBarChart(points: List<ReportPoint>) {
+    val maxAmount = points.maxOf(ReportPoint::amountMinor)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(210.dp)
+            .padding(top = 18.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        points.forEach { point ->
+            val fraction = point.amountMinor.toFloat() / maxAmount.toFloat()
+            val barHeight = max(6f, 132f * fraction).dp
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Bottom,
+            ) {
+                Text(
+                    text = compactAmount(point.amountMinor),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    style = MiuixTheme.textStyles.footnote2,
+                )
+                Box(
+                    modifier = Modifier
+                        .padding(top = 5.dp)
+                        .width(28.dp)
+                        .height(barHeight)
+                        .squircleBackground(
+                            color = MiuixTheme.colorScheme.primary.copy(alpha = 0.32f),
+                            cornerRadius = 8.dp,
+                        ),
+                )
+                Text(
+                    text = point.label,
+                    modifier = Modifier.padding(top = 7.dp),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    maxLines = 1,
+                    style = MiuixTheme.textStyles.footnote2,
+                )
             }
         }
     }
