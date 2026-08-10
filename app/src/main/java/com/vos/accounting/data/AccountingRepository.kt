@@ -38,16 +38,16 @@ class AccountingRepository(
         .distinctUntilChanged()
     private val storedTransactions = currentLedgerId.flatMapLatest { dao.observeTransactions(it) }
     val transactions = combine(storedTransactions, ledgers, currencies, ::convertBaseAmounts)
-    val allTransactions = combine(dao.observeAllTransactions(), ledgers, currencies, ::convertBaseAmounts)
+    val accountBalances = dao.observeAccountBalances()
+        .map { records -> records.associateBy(AccountBalanceRecord::accountId) }
+        .distinctUntilChanged()
+    val accountExchangeLinks = dao.observeAccountExchangeLinks().distinctUntilChanged()
     val overviewTotals = transactions.map { records ->
         OverviewTotals(
             incomeMinor = records.filter { it.type == TransactionType.INCOME }.sumOf(TransactionRecord::baseAmountMinor),
             expenseMinor = records.filter { it.type == TransactionType.EXPENSE }.sumOf(TransactionRecord::baseAmountMinor),
         )
     }
-
-    /** 提供数据库访问供备份恢复等基础设施使用。 */
-    internal val accountingDao: AccountingDao get() = dao
 
     /**
      * 建立首次启动所需的默认账本数据。

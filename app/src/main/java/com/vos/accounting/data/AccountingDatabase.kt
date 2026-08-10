@@ -401,6 +401,30 @@ data class TransactionRecord(
 )
 
 /**
+ * 承载单个账户按全部历史账目聚合后的实时余额。
+ */
+data class AccountBalanceRecord(
+    @ColumnInfo(name = "account_id")
+    val accountId: Long,
+    @ColumnInfo(name = "balance_minor")
+    val balanceMinor: Long,
+    @ColumnInfo(name = "income_minor")
+    val incomeMinor: Long,
+    @ColumnInfo(name = "expense_minor")
+    val expenseMinor: Long,
+)
+
+/**
+ * 承载币种兑换流水中的兑换标识与账户关联。
+ */
+data class AccountExchangeLink(
+    @ColumnInfo(name = "exchange_id")
+    val exchangeId: Long,
+    @ColumnInfo(name = "account_id")
+    val accountId: Long,
+)
+
+/**
  * 定义账户、分类和账目的本地数据库操作。
  */
 
@@ -483,6 +507,63 @@ interface AccountingDao {
      */
     @Query(TRANSACTION_SELECT + "\n        ORDER BY occurred_at DESC, transactions.id DESC")
     fun observeAllTransactions(): Flow<List<TransactionRecord>>
+
+    /**
+     * 持续观察全部账户按历史账目聚合后的实时余额。
+     */
+    @Query(
+        """
+        SELECT
+            accounts.id AS account_id,
+            accounts.opening_balance_minor + COALESCE(
+                SUM(
+                    CASE
+                        WHEN transactions.type = 'INCOME' THEN transactions.account_amount_minor
+                        WHEN transactions.type = 'TRANSFER' AND transactions.transfer_direction = 'IN'
+                            THEN transactions.account_amount_minor
+                        ELSE -transactions.account_amount_minor
+                    END
+                ),
+                0
+            ) AS balance_minor,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN transactions.type = 'INCOME' THEN transactions.account_amount_minor
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS income_minor,
+            COALESCE(
+                SUM(
+                    CASE
+                        WHEN transactions.type = 'EXPENSE' THEN transactions.account_amount_minor
+                        ELSE 0
+                    END
+                ),
+                0
+            ) AS expense_minor
+        FROM accounts
+        LEFT JOIN transactions ON transactions.account_id = accounts.id
+        GROUP BY accounts.id
+        ORDER BY accounts.id
+        """,
+    )
+    fun observeAccountBalances(): Flow<List<AccountBalanceRecord>>
+
+    /**
+     * 持续观察用于追溯账户币种兑换沿袭关系的轻量关联。
+     */
+    @Query(
+        """
+        SELECT exchange_id, account_id
+        FROM transactions
+        WHERE exchange_id IS NOT NULL
+        ORDER BY exchange_id, account_id
+        """,
+    )
+    fun observeAccountExchangeLinks(): Flow<List<AccountExchangeLink>>
 
     /**
      * 持续观察应用外观设置。

@@ -6,6 +6,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -570,52 +571,58 @@ private fun ReportChartCard(
 private fun ReportBarChart(points: List<ReportPoint>) {
     val maxAmount = points.maxOf(ReportPoint::amountMinor)
     val chartWidth = max(336, points.size * 48).dp
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-    ) {
-        Row(
+    val scrollState = rememberScrollState()
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
-                .width(chartWidth)
-                .height(210.dp)
-                .padding(top = 18.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.Bottom,
+                .fillMaxWidth()
+                .horizontalScroll(
+                    state = scrollState,
+                    enabled = chartWidth > maxWidth,
+                ),
         ) {
-            points.forEach { point ->
-                val fraction = point.amountMinor.toFloat() / maxAmount.toFloat()
-                val barHeight = max(6f, 132f * fraction).dp
-                Column(
-                    modifier = Modifier
-                        .width(42.dp)
-                        .fillMaxHeight(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Bottom,
-                ) {
-                    Text(
-                        text = compactAmount(point.amountMinor),
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        style = MiuixTheme.textStyles.footnote2,
-                    )
-                    Box(
+            Row(
+                modifier = Modifier
+                    .width(chartWidth)
+                    .height(210.dp)
+                    .padding(top = 18.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                points.forEach { point ->
+                    val fraction = point.amountMinor.toFloat() / maxAmount.toFloat()
+                    val barHeight = max(6f, 132f * fraction).dp
+                    Column(
                         modifier = Modifier
-                            .padding(top = 5.dp)
-                            .width(28.dp)
-                            .height(barHeight)
-                            .squircleBackground(
-                                color = MiuixTheme.colorScheme.primary.copy(alpha = 0.32f),
-                                cornerRadius = 8.dp,
-                            ),
-                    )
-                    Text(
-                        text = point.label,
-                        modifier = Modifier.padding(top = 7.dp),
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        maxLines = 1,
-                        style = MiuixTheme.textStyles.footnote2,
-                    )
+                            .width(42.dp)
+                            .fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom,
+                    ) {
+                        Text(
+                            text = compactAmount(point.amountMinor),
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            style = MiuixTheme.textStyles.footnote2,
+                        )
+                        Box(
+                            modifier = Modifier
+                                .padding(top = 5.dp)
+                                .width(28.dp)
+                                .height(barHeight)
+                                .squircleBackground(
+                                    color = MiuixTheme.colorScheme.primary.copy(alpha = 0.32f),
+                                    cornerRadius = 8.dp,
+                                ),
+                        )
+                        Text(
+                            text = point.label,
+                            modifier = Modifier.padding(top = 7.dp),
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            maxLines = 1,
+                            style = MiuixTheme.textStyles.footnote2,
+                        )
+                    }
                 }
             }
         }
@@ -731,14 +738,18 @@ private fun buildReportData(
     selectedType: TransactionType,
     anchor: LocalDate,
 ): ReportData {
+    val recordsByDate = records.groupBy(::recordDate)
     val range = rangeFor(period, anchor)
     val previousRange = rangeFor(period, shiftAnchor(anchor, period, -1))
-    val currentRecords = records.filter { recordDate(it) in range.start..range.end }
+    val currentRecords = recordsForRange(recordsByDate, range.start, range.end)
     val currentTypeRecords = currentRecords.filter { it.type == selectedType }
     val currentTotal = currentTypeRecords.sumOf(TransactionRecord::baseAmountMinor)
-    val previousTotal = records
-        .filter { it.type == selectedType && recordDate(it) in previousRange.start..previousRange.end }
-        .sumOf(TransactionRecord::baseAmountMinor)
+    val previousTotal = amountForRange(
+        recordsByDate = recordsByDate,
+        selectedType = selectedType,
+        start = previousRange.start,
+        end = previousRange.end,
+    )
     val dayCount = ChronoUnit.DAYS.between(range.start, range.end) + 1
     val income = currentRecords
         .filter { it.type == TransactionType.INCOME }
@@ -753,8 +764,8 @@ private fun buildReportData(
         dailyAverageMinor = currentTotal / dayCount,
         comparedWithPreviousMinor = currentTotal - previousTotal,
         balanceMinor = income - expense,
-        currentTrend = currentTrendPoints(records, period, selectedType, range),
-        recentTrend = recentTrendPoints(records, period, selectedType, anchor),
+        currentTrend = currentTrendPoints(recordsByDate, period, selectedType, range),
+        recentTrend = recentTrendPoints(recordsByDate, period, selectedType, anchor),
         categories = currentTypeRecords
             .groupBy(TransactionRecord::categoryName)
             .map { (name, groupedRecords) ->
@@ -807,7 +818,7 @@ private fun shiftAnchor(
  * 按周期内部的日、周或月生成趋势点。
  */
 private fun currentTrendPoints(
-    records: List<TransactionRecord>,
+    recordsByDate: Map<LocalDate, List<TransactionRecord>>,
     period: ReportPeriod,
     selectedType: TransactionType,
     range: ReportDateRange,
@@ -816,7 +827,7 @@ private fun currentTrendPoints(
         val date = range.start.plusDays(offset)
         ReportPoint(
             label = WEEKDAY_LABELS[offset.toInt()],
-            amountMinor = amountForRange(records, selectedType, date, date),
+            amountMinor = amountForRange(recordsByDate, selectedType, date, date),
         )
     }
 
@@ -827,7 +838,7 @@ private fun currentTrendPoints(
             val end = minOf(start.plusDays(6), range.end)
             ReportPoint(
                 label = "${index + 1}周",
-                amountMinor = amountForRange(records, selectedType, start, end),
+                amountMinor = amountForRange(recordsByDate, selectedType, start, end),
             )
         }
     }
@@ -837,10 +848,10 @@ private fun currentTrendPoints(
         ReportPoint(
             label = "${month}月",
             amountMinor = amountForRange(
-                records,
-                selectedType,
-                monthRange.atDay(1),
-                monthRange.atEndOfMonth(),
+                recordsByDate = recordsByDate,
+                selectedType = selectedType,
+                start = monthRange.atDay(1),
+                end = monthRange.atEndOfMonth(),
             ),
         )
     }
@@ -850,7 +861,7 @@ private fun currentTrendPoints(
  * 生成包含当前周期在内的最近六个周期趋势点。
  */
 private fun recentTrendPoints(
-    records: List<TransactionRecord>,
+    recordsByDate: Map<LocalDate, List<TransactionRecord>>,
     period: ReportPeriod,
     selectedType: TransactionType,
     anchor: LocalDate,
@@ -860,25 +871,48 @@ private fun recentTrendPoints(
     ReportPoint(
         label = recentPointLabel(period, pointRange, offset == 0),
         amountMinor = amountForRange(
-            records,
-            selectedType,
-            pointRange.start,
-            pointRange.end,
+            recordsByDate = recordsByDate,
+            selectedType = selectedType,
+            start = pointRange.start,
+            end = pointRange.end,
         ),
     )
+}
+
+/**
+ * 返回指定日期范围内的全部账目。
+ */
+private fun recordsForRange(
+    recordsByDate: Map<LocalDate, List<TransactionRecord>>,
+    start: LocalDate,
+    end: LocalDate,
+): List<TransactionRecord> = buildList {
+    var date = start
+    while (!date.isAfter(end)) {
+        addAll(recordsByDate[date].orEmpty())
+        date = date.plusDays(1)
+    }
 }
 
 /**
  * 汇总指定日期区间和收支类型的金额。
  */
 private fun amountForRange(
-    records: List<TransactionRecord>,
+    recordsByDate: Map<LocalDate, List<TransactionRecord>>,
     selectedType: TransactionType,
     start: LocalDate,
     end: LocalDate,
-): Long = records
-    .filter { it.type == selectedType && recordDate(it) in start..end }
-    .sumOf(TransactionRecord::baseAmountMinor)
+): Long {
+    var amount = 0L
+    var date = start
+    while (!date.isAfter(end)) {
+        recordsByDate[date].orEmpty().forEach { record ->
+            if (record.type == selectedType) amount += record.baseAmountMinor
+        }
+        date = date.plusDays(1)
+    }
+    return amount
+}
 
 /**
  * 将账目时间戳转换为设备时区日期。

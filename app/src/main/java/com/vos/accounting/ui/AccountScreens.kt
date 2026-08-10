@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountExchangeLink
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.TransactionType
@@ -72,7 +73,10 @@ fun AccountDetailScreen(
     account: AccountEntity,
     currency: CurrencyEntity,
     transactions: List<TransactionRecord>,
-    balanceTransactions: List<TransactionRecord>,
+    accountBalanceMinor: Long,
+    incomeMinor: Long,
+    expenseMinor: Long,
+    accountExchangeLinks: List<AccountExchangeLink>,
     coloredTransactionAmountsEnabled: Boolean,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
@@ -82,11 +86,10 @@ fun AccountDetailScreen(
 ) {
     val accountIds = linkedAccountIds(
         accountId = account.id,
-        exchangeAccountIds = balanceTransactions
-            .filter { it.exchangeId != null }
-            .groupBy(TransactionRecord::exchangeId)
+        exchangeAccountIds = accountExchangeLinks
+            .groupBy(AccountExchangeLink::exchangeId)
             .values
-            .map { records -> records.map(TransactionRecord::accountId).toSet() },
+            .map { links -> links.map(AccountExchangeLink::accountId).toSet() },
     )
     val exchangeSources = transactions
         .filter { it.transferDirection == TransferDirection.OUT && it.exchangeId != null }
@@ -94,20 +97,6 @@ fun AccountDetailScreen(
     val accountTransactions = transactions.filter {
         it.accountId in accountIds && it.transferDirection != TransferDirection.OUT
     }
-    val accountBalanceTransactions = balanceTransactions.filter { it.accountId == account.id }
-    val income = accountBalanceTransactions
-        .filter { it.type == TransactionType.INCOME }
-        .sumOf(TransactionRecord::accountAmountMinor)
-    val expense = accountBalanceTransactions
-        .filter { it.type == TransactionType.EXPENSE }
-        .sumOf(TransactionRecord::accountAmountMinor)
-    val transferIn = accountBalanceTransactions
-        .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN }
-        .sumOf(TransactionRecord::accountAmountMinor)
-    val transferOut = accountBalanceTransactions
-        .filter { it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.OUT }
-        .sumOf(TransactionRecord::accountAmountMinor)
-    val balance = account.openingBalanceMinor + income + transferIn - expense - transferOut
     val monthlyTransactions = accountTransactions
         .groupBy(::accountRecordMonth)
         .entries
@@ -174,9 +163,9 @@ fun AccountDetailScreen(
                     item {
                         AccountBalanceCard(
                             currency = currency,
-                            balance = balance,
-                            income = income,
-                            expense = expense,
+                            balance = accountBalanceMinor,
+                            income = incomeMinor,
+                            expense = expenseMinor,
                         )
                     }
                     if (monthlyTransactions.isEmpty()) {

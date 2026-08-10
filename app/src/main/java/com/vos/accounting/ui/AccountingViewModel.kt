@@ -2,11 +2,12 @@ package com.vos.accounting.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import android.content.Context
 import androidx.lifecycle.viewModelScope
 import com.vos.accounting.backup.BackupManager
 import com.vos.accounting.backup.PreparedBackup
+import com.vos.accounting.data.AccountBalanceRecord
 import com.vos.accounting.data.AccountEntity
+import com.vos.accounting.data.AccountExchangeLink
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.CategoryEntity
@@ -45,7 +46,8 @@ data class AccountingUiState(
     val currentLedgerId: Long = 1,
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionRecord> = emptyList(),
-    val allTransactions: List<TransactionRecord> = emptyList(),
+    val accountBalances: Map<Long, AccountBalanceRecord> = emptyMap(),
+    val accountExchangeLinks: List<AccountExchangeLink> = emptyList(),
     val writeInProgress: Boolean = false,
     val writeError: String? = null,
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
@@ -68,6 +70,7 @@ private data class LedgerAccountState(
  */
 class AccountingViewModel(
     private val repository: AccountingRepository,
+    private val backupManager: BackupManager,
 ) : ViewModel() {
     private val writeState = MutableStateFlow(AccountingWriteState())
     private var pendingLedgerId: Long? = null
@@ -100,15 +103,19 @@ class AccountingViewModel(
         )
     }
 
-    private val ledgerStateWithGlobalTransactions = combine(
+    private val ledgerStateWithAccountFacts = combine(
         ledgerState,
-        repository.allTransactions,
-    ) { state, allTransactions ->
-        state.copy(allTransactions = allTransactions)
+        repository.accountBalances,
+        repository.accountExchangeLinks,
+    ) { state, accountBalances, accountExchangeLinks ->
+        state.copy(
+            accountBalances = accountBalances,
+            accountExchangeLinks = accountExchangeLinks,
+        )
     }
 
     val uiState = combine(
-        ledgerStateWithGlobalTransactions,
+        ledgerStateWithAccountFacts,
         repository.settings,
         writeState,
     ) { ledger, settings, write ->
@@ -479,37 +486,34 @@ class AccountingViewModel(
 
     /** 导出当前全部数据为加密备份字节。 */
     fun exportBackup(
-        context: Context,
         password: String,
         onReady: (ByteArray) -> Unit,
     ) {
         launchWrite(
-            action = { BackupManager(context.applicationContext, repository.accountingDao).export(password) },
+            action = { backupManager.export(password) },
             onSuccess = onReady,
         )
     }
 
     /** 解密并校验备份文件，返回待恢复内容。 */
     fun parseBackup(
-        context: Context,
         blob: ByteArray,
         password: String,
         onParsed: (PreparedBackup) -> Unit,
     ) {
         launchWrite(
-            action = { BackupManager(context.applicationContext, repository.accountingDao).parse(blob, password) },
+            action = { backupManager.parse(blob, password) },
             onSuccess = onParsed,
         )
     }
 
     /** 恢复备份：写入媒体并全量替换数据库。 */
     fun applyBackup(
-        context: Context,
         prepared: PreparedBackup,
         onDone: () -> Unit,
     ) {
         launchWrite(
-            action = { BackupManager(context.applicationContext, repository.accountingDao).apply(prepared) },
+            action = { backupManager.apply(prepared) },
             onSuccess = { onDone() },
         )
     }
@@ -518,14 +522,17 @@ class AccountingViewModel(
         /**
          * 创建注入指定仓库的 ViewModel 工厂。
          */
-        fun factory(repository: AccountingRepository): ViewModelProvider.Factory =
+        fun factory(
+            repository: AccountingRepository,
+            backupManager: BackupManager,
+        ): ViewModelProvider.Factory =
             object : ViewModelProvider.Factory {
                 /**
                  * 创建记账页面 ViewModel。
                  */
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                    AccountingViewModel(repository) as T
+                    AccountingViewModel(repository, backupManager) as T
             }
     }
 }

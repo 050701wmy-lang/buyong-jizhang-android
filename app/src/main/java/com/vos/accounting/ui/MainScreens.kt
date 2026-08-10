@@ -228,9 +228,9 @@ fun HomeScreen(
     onSelectLedger: (Long) -> Unit,
 ) {
     val activeAccounts = uiState.accounts.filterNot(AccountEntity::isArchived)
-    val accountBalances = remember(uiState.accounts, uiState.allTransactions) {
-        uiState.accounts.filterNot(AccountEntity::isArchived).associateWith { account ->
-            calculateAccountBalance(account, uiState.allTransactions)
+    val accountBalances = remember(activeAccounts, uiState.accountBalances) {
+        activeAccounts.associateWith { account ->
+            uiState.accountBalances[account.id]?.balanceMinor ?: account.openingBalanceMinor
         }
     }
     val currencies = remember(uiState.currencies) {
@@ -952,23 +952,6 @@ private fun HomeAccountRow(
         }
     }
 }
-
-/**
- * 根据账户期初余额和全部收支计算实时余额。
- */
-private fun calculateAccountBalance(
-    account: AccountEntity,
-    records: List<TransactionRecord>,
-): Long = account.openingBalanceMinor + records
-    .filter { it.accountId == account.id }
-    .sumOf { record ->
-        when {
-            record.type == TransactionType.INCOME -> record.accountAmountMinor
-            record.type == TransactionType.TRANSFER &&
-                record.transferDirection == TransferDirection.IN -> record.accountAmountMinor
-            else -> -record.accountAmountMinor
-        }
-    }
 
 /**
  * 展示按时间倒序排列的全部账目。

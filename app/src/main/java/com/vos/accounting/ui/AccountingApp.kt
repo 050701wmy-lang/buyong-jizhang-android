@@ -18,8 +18,6 @@ import androidx.navigation3.ui.NavDisplay
 import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
 import com.vos.accounting.model.AccountType
-import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import com.vos.accounting.data.LedgerEntity
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
@@ -126,7 +124,7 @@ data object BackupRoute : AccountingRoute
 fun AccountingApp() {
     val application = LocalContext.current.applicationContext as AccountingApplication
     val viewModel: AccountingViewModel = viewModel(
-        factory = AccountingViewModel.factory(application.repository),
+        factory = AccountingViewModel.factory(application.repository, application.backupManager),
     )
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val backStack = rememberNavBackStack(MainRoute)
@@ -245,7 +243,11 @@ fun AccountingApp() {
                                 account = account,
                                 currency = currency,
                                 transactions = uiState.transactions,
-                                balanceTransactions = uiState.allTransactions,
+                                accountBalanceMinor = uiState.accountBalances[account.id]?.balanceMinor
+                                    ?: account.openingBalanceMinor,
+                                incomeMinor = uiState.accountBalances[account.id]?.incomeMinor ?: 0,
+                                expenseMinor = uiState.accountBalances[account.id]?.expenseMinor ?: 0,
+                                accountExchangeLinks = uiState.accountExchangeLinks,
                                 coloredTransactionAmountsEnabled = uiState.coloredTransactionAmountsEnabled,
                                 backdrop = backdrop,
                                 onBack = { backStack.removeAt(backStack.lastIndex) },
@@ -272,21 +274,9 @@ fun AccountingApp() {
                             }
                             Unit
                         }
-                        val accountTransactions = uiState.allTransactions.filter {
-                            it.accountId == route.accountId
-                        }
-                        val currentBalanceMinor = if (account == null) {
-                            0
-                        } else {
-                            account.openingBalanceMinor + accountTransactions.sumOf {
-                                when {
-                                    it.type == TransactionType.INCOME -> it.accountAmountMinor
-                                    it.type == TransactionType.TRANSFER &&
-                                        it.transferDirection == TransferDirection.IN -> it.accountAmountMinor
-                                    else -> -it.accountAmountMinor
-                                }
-                            }
-                        }
+                        val currentBalanceMinor = account?.let {
+                            uiState.accountBalances[it.id]?.balanceMinor ?: it.openingBalanceMinor
+                        } ?: 0
                         AccountEditorScreen(
                             account = account,
                             accountTypes = uiState.accountTypes,
@@ -440,7 +430,6 @@ fun AccountingApp() {
                         )
                     }
                     entry<BackupRoute> {
-                        val appContext = LocalContext.current.applicationContext
                         BackupRestoreScreen(
                             writeInProgress = uiState.writeInProgress,
                             backdrop = backdrop,
@@ -449,15 +438,9 @@ fun AccountingApp() {
                                     backStack.removeAt(backStack.lastIndex)
                                 }
                             },
-                            onExport = { password, onReady ->
-                                viewModel.exportBackup(appContext, password, onReady)
-                            },
-                            onParse = { blob, password, onParsed ->
-                                viewModel.parseBackup(appContext, blob, password, onParsed)
-                            },
-                            onApply = { prepared, onDone ->
-                                viewModel.applyBackup(appContext, prepared, onDone)
-                            },
+                            onExport = viewModel::exportBackup,
+                            onParse = viewModel::parseBackup,
+                            onApply = viewModel::applyBackup,
                         )
                     }
                 },

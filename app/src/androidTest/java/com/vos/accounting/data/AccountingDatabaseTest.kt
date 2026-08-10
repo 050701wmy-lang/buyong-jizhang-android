@@ -369,6 +369,47 @@ class AccountingDatabaseTest {
         assertEquals(0, totals.incomeMinor)
     }
 
+    /**
+     * 验证账户读取模型直接聚合余额与普通收支摘要。
+     */
+    @Test
+    fun accountBalanceProjectionUsesAccountAmounts() = runBlocking {
+        repository.initialize()
+        val account = dao.observeAccounts().first().single()
+        val categories = dao.observeCategories().first()
+        val expenseCategory = categories.first { it.type == TransactionType.EXPENSE }
+        val incomeCategory = categories.first { it.type == TransactionType.INCOME }
+        repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 1200,
+                accountId = account.id,
+                categoryId = expenseCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 1,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+        repository.saveTransaction(
+            TransactionDraft(
+                type = TransactionType.INCOME,
+                amountMinor = 2000,
+                accountId = account.id,
+                categoryId = incomeCategory.id,
+                merchant = "",
+                note = "",
+                occurredAt = 2,
+                source = TransactionSource.MANUAL,
+            ),
+        )
+
+        val balance = repository.accountBalances.first().getValue(account.id)
+        assertEquals(account.openingBalanceMinor + 800, balance.balanceMinor)
+        assertEquals(2000, balance.incomeMinor)
+        assertEquals(1200, balance.expenseMinor)
+    }
+
     /** 验证修改账本本位币后按历史快照币种换算展示且不改写原流水。 */
     @Test
     fun changingLedgerBaseCurrencyKeepsHistoricalSnapshotMeaning() = runBlocking {
@@ -486,18 +527,19 @@ class AccountingDatabaseTest {
         val usdRate = dao.findCurrency("usd")!!.rateToCnyScaled
         assertEquals(convertCurrencyMinor(10000, cnyRate, usdRate), newLegs.single().amountMinor)
 
-        suspend fun balanceOf(accountId: Long, opening: Long): Long = opening + dao.transactionsByAccount(accountId).sumOf {
-            when {
-                it.type == TransactionType.INCOME -> it.amountMinor
-                it.type == TransactionType.TRANSFER && it.transferDirection == TransferDirection.IN -> it.amountMinor
-                else -> -it.amountMinor
-            }
-        }
-        assertEquals(0, balanceOf(oldId, oldAccount!!.openingBalanceMinor))
+        val balances = repository.accountBalances.first()
+        assertEquals(0, balances.getValue(oldId).balanceMinor)
         assertEquals(
             convertCurrencyMinor(10000, cnyRate, usdRate),
-            balanceOf(newId, newAccount!!.openingBalanceMinor),
+            balances.getValue(newId).balanceMinor,
         )
+        val exchangeLinks = repository.accountExchangeLinks.first()
+            .groupBy(AccountExchangeLink::exchangeId)
+            .values
+            .single()
+            .map(AccountExchangeLink::accountId)
+            .toSet()
+        assertEquals(setOf(oldId, newId), exchangeLinks)
 
         // 兑换流水不计入普通收支汇总
         val totals = repository.overviewTotals.first()
