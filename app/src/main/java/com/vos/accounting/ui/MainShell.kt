@@ -1,6 +1,7 @@
 package com.vos.accounting.ui
 
 import android.os.Build
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -294,7 +295,10 @@ private fun MainScaffold(
                             selected = activeTab == tab,
                             onClick = {
                                 pagerCoroutineScope.launch {
-                                    pagerState?.animateScrollToPage(tab.ordinal)
+                                    pagerState?.animateScrollToPage(
+                                        page = tab.ordinal,
+                                        animationSpec = tween(durationMillis = 300),
+                                    )
                                 }
                             },
                             icon = tab.icon,
