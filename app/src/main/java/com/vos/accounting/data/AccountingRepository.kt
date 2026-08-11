@@ -2,11 +2,17 @@ package com.vos.accounting.data
 
 import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
+import com.vos.accounting.model.AutoBookkeepingCapture
+import com.vos.accounting.model.AutoBookkeepingStatus
+import com.vos.accounting.model.NotificationPrivacyMode
+import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
 import com.vos.accounting.model.TransactionDraft
+import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.OverviewTotals
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -14,15 +20,24 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import java.security.MessageDigest
 
 /**
  * 表示用户可修正的账务写入错误。
  */
 class AccountingWriteException(message: String) : IllegalArgumentException(message)
 
+/** 承载通知展示所需的自动账单与本地分类、账户名称。 */
+data class AutoBookkeepingNotificationData(
+    val event: AutoBookkeepingEventEntity,
+    val accountName: String?,
+    val categoryName: String?,
+)
+
 /**
  * 汇总账本数据读取与统一写入流程。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class AccountingRepository(
     private val dao: AccountingDao,
 ) {
@@ -33,6 +48,7 @@ class AccountingRepository(
     val currencies = dao.observeCurrencies()
     val categories = dao.observeCategories()
     val settings = dao.observeSettings()
+    val pendingAutoBookkeepingEvents = dao.observePendingAutoBookkeepingEvents()
     private val currentLedgerId: Flow<Long> = settings
         .map { it?.currentLedgerId ?: 1L }
         .distinctUntilChanged()
@@ -43,9 +59,10 @@ class AccountingRepository(
         .distinctUntilChanged()
     val accountExchangeLinks = dao.observeAccountExchangeLinks().distinctUntilChanged()
     val overviewTotals = transactions.map { records ->
+        val reportRecords = records.filter { it.exchangeId == null }
         OverviewTotals(
-            incomeMinor = records.filter { it.type == TransactionType.INCOME }.sumOf(TransactionRecord::baseAmountMinor),
-            expenseMinor = records.filter { it.type == TransactionType.EXPENSE }.sumOf(TransactionRecord::baseAmountMinor),
+            incomeMinor = reportRecords.filter { it.type == TransactionType.INCOME }.sumOf(TransactionRecord::baseAmountMinor),
+            expenseMinor = reportRecords.filter { it.type == TransactionType.EXPENSE }.sumOf(TransactionRecord::baseAmountMinor),
         )
     }
 
@@ -54,6 +71,9 @@ class AccountingRepository(
      */
     suspend fun initialize() {
         dao.seedDefaults()
+        dao.deleteProcessedAutoBookkeepingEventsBefore(
+            System.currentTimeMillis() - AUTO_EVENT_RETENTION_MILLIS,
+        )
     }
 
     /**
@@ -102,29 +122,191 @@ class AccountingRepository(
         dao.updateColoredTransactionAmountsEnabled(enabled)
     }
 
+    /** 更新自动记账总开关。 */
+    suspend fun updateAutoBookkeepingEnabled(enabled: Boolean) {
+        dao.updateAutoBookkeepingEnabled(enabled)
+    }
+
+    /** 更新指定支付平台的自动账单来源开关。 */
+    suspend fun updateAutoBookkeepingProviderEnabled(provider: PaymentProvider, enabled: Boolean) {
+        when (provider) {
+            PaymentProvider.WECHAT -> dao.updateAutoBookkeepingWechatEnabled(enabled)
+            PaymentProvider.ALIPAY -> dao.updateAutoBookkeepingAlipayEnabled(enabled)
+            PaymentProvider.UNIONPAY -> dao.updateAutoBookkeepingUnionPayEnabled(enabled)
+        }
+    }
+
+    /** 更新账单通知的隐私展示方式。 */
+    suspend fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode) {
+        dao.updateNotificationPrivacyMode(mode)
+    }
+
+    /** 返回当前应用设置快照。 */
+    suspend fun getSettingsSnapshot(): AppSettingsEntity = dao.getSettings() ?: AppSettingsEntity()
+
+    /** 把支付页面或通知提取结果去重、匹配并保存为待确认账单。 */
+    suspend fun captureAutoBookkeeping(capture: AutoBookkeepingCapture): AutoBookkeepingEventEntity? {
+        val settings = dao.getSettings() ?: AppSettingsEntity()
+        if (!settings.autoBookkeepingEnabled || !settings.isProviderEnabled(capture.provider)) return null
+        dao.deleteProcessedAutoBookkeepingEventsBefore(
+            System.currentTimeMillis() - AUTO_EVENT_RETENTION_MILLIS,
+        )
+        val merchantKey = normalizeAutoKey(capture.merchant)
+        val paymentMethodKey = normalizeAutoKey(capture.paymentMethodKey)
+        val fingerprint = autoFingerprint(capture, merchantKey, paymentMethodKey)
+        val existing = capture.externalKeyHash?.let { hash ->
+            dao.findAutoBookkeepingEventByExternalKey(hash)
+        }
+            ?: dao.findAutoBookkeepingEventByFingerprint(
+                provider = capture.provider,
+                fingerprint = fingerprint,
+                occurredAt = capture.occurredAt,
+                fromTime = capture.occurredAt - AUTO_DUPLICATE_WINDOW_MILLIS,
+                toTime = capture.occurredAt + AUTO_DUPLICATE_WINDOW_MILLIS,
+        )
+        if (existing != null && existing.status != AutoBookkeepingStatus.PENDING) return null
+        val eventLedgerId = existing?.ledgerId ?: settings.currentLedgerId
+        val prediction = predictAutoBookkeeping(
+            capture = capture,
+            ledgerId = eventLedgerId,
+            merchantKey = merchantKey,
+            paymentMethodKey = paymentMethodKey,
+        )
+        val now = System.currentTimeMillis()
+        val mergedSources = ((existing?.captureSources?.split(',') ?: emptyList()) + capture.source.name)
+            .filter(String::isNotBlank)
+            .distinct()
+            .joinToString(",")
+        val event = AutoBookkeepingEventEntity(
+            id = existing?.id ?: 0,
+            provider = capture.provider,
+            status = AutoBookkeepingStatus.PENDING,
+            type = capture.type,
+            amountMinor = capture.amountMinor,
+            currencyKey = capture.currencyKey,
+            accountId = existing?.accountId ?: prediction.accountId,
+            categoryId = existing?.categoryId ?: prediction.categoryId,
+            merchant = capture.merchant.trim().ifEmpty { existing?.merchant.orEmpty() },
+            note = capture.note.trim().ifEmpty { existing?.note.orEmpty() },
+            occurredAt = minOf(existing?.occurredAt ?: capture.occurredAt, capture.occurredAt),
+            paymentMethodKey = paymentMethodKey.ifEmpty { existing?.paymentMethodKey.orEmpty() },
+            destinationPaymentMethodKey = "",
+            externalKeyHash = capture.externalKeyHash ?: existing?.externalKeyHash,
+            fingerprint = fingerprint,
+            captureSources = mergedSources,
+            canConfirm = existing?.canConfirm == true || prediction.canConfirm,
+            ledgerId = eventLedgerId,
+            confirmedTransactionId = null,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+        )
+        if (existing != null) {
+            dao.updateAutoBookkeepingEvent(event)
+            return event
+        }
+        val insertedId = dao.insertAutoBookkeepingEvent(event)
+        if (insertedId > 0) return event.copy(id = insertedId)
+        return capture.externalKeyHash?.let { hash ->
+            dao.findAutoBookkeepingEventByExternalKey(hash)
+        }
+    }
+
+    /** 返回指定待确认账单的当前内容。 */
+    suspend fun findAutoBookkeepingEvent(eventId: Long): AutoBookkeepingEventEntity? =
+        dao.findAutoBookkeepingEvent(eventId)
+
+    /** 返回通知详情所需的账单、账户和分类名称。 */
+    suspend fun findAutoBookkeepingNotificationData(
+        eventId: Long,
+    ): AutoBookkeepingNotificationData? {
+        val event = dao.findAutoBookkeepingEvent(eventId) ?: return null
+        return AutoBookkeepingNotificationData(
+            event = event,
+            accountName = event.accountId?.let { id -> dao.findAccount(id)?.name },
+            categoryName = event.categoryId?.let { id -> dao.findCategory(id)?.name },
+        )
+    }
+
+    /** 使用事件已有的高置信度字段一键确认正式入账。 */
+    suspend fun confirmAutoBookkeepingEvent(eventId: Long): Long {
+        val event = dao.findAutoBookkeepingEvent(eventId)
+            ?: throw AccountingWriteException("待确认账单不存在")
+        if (!event.canConfirm) throw AccountingWriteException("请先补全账单信息")
+        return confirmAutoBookkeepingEvent(eventId, event.toTransactionDraft(), learnMappings = false)
+    }
+
+    /** 使用用户编辑后的完整草稿确认入账并学习本地映射。 */
+    suspend fun confirmAutoBookkeepingEvent(
+        eventId: Long,
+        draft: TransactionDraft,
+        learnMappings: Boolean = true,
+    ): Long {
+        val event = dao.findAutoBookkeepingEvent(eventId)
+            ?: throw AccountingWriteException("待确认账单不存在")
+        if (event.status == AutoBookkeepingStatus.CONFIRMED) {
+            return event.confirmedTransactionId ?: 0L
+        }
+        if (event.status != AutoBookkeepingStatus.PENDING) {
+            throw AccountingWriteException("待确认账单已经处理")
+        }
+        val confirmedDraft = draft.copy(source = TransactionSource.AI, ledgerId = event.ledgerId)
+        validateTransactionDraft(confirmedDraft)
+        val now = System.currentTimeMillis()
+        val updatedEvent = event.copy(
+            type = confirmedDraft.type,
+            amountMinor = confirmedDraft.amountMinor,
+            currencyKey = confirmedDraft.currencyKey,
+            accountId = confirmedDraft.accountId,
+            categoryId = confirmedDraft.categoryId,
+            destinationAmountMinor = null,
+            destinationAccountId = null,
+            refundOfTransactionId = null,
+            merchant = confirmedDraft.merchant.trim(),
+            note = confirmedDraft.note.trim(),
+            occurredAt = confirmedDraft.occurredAt,
+            canConfirm = true,
+            updatedAt = now,
+        )
+        val mappings = if (learnMappings) autoBookkeepingMappings(event, confirmedDraft) else AutoMappings()
+        val transactionId = dao.confirmAutoBookkeepingEvent(
+            eventId = eventId,
+            transactions = transactionEntities(confirmedDraft),
+            updatedEvent = updatedEvent,
+            categoryMapping = mappings.category,
+            accountMappings = mappings.accounts,
+        )
+        return transactionId
+    }
+
+    /** 明确忽略一条待确认账单并保留短期防重记录。 */
+    suspend fun ignoreAutoBookkeepingEvent(eventId: Long) {
+        dao.ignoreAutoBookkeepingEvent(eventId, System.currentTimeMillis())
+    }
+
+    /** 根据用户补全结果生成精确商户分类和支付账户映射。 */
+    private fun autoBookkeepingMappings(
+        event: AutoBookkeepingEventEntity,
+        draft: TransactionDraft,
+    ): AutoMappings {
+        var categoryMapping: AutoCategoryMappingEntity? = null
+        val accountMappings = mutableListOf<AutoAccountMappingEntity>()
+        val merchantKey = normalizeAutoKey(event.merchant)
+        val categoryId = draft.categoryId
+        if (merchantKey.isNotEmpty() && categoryId != null) {
+            categoryMapping = AutoCategoryMappingEntity(event.provider, merchantKey, draft.type, categoryId)
+        }
+        if (event.paymentMethodKey.isNotEmpty()) {
+            accountMappings += AutoAccountMappingEntity(event.provider, event.paymentMethodKey, draft.accountId)
+        }
+        return AutoMappings(categoryMapping, accountMappings)
+    }
+
     /**
      * 把已经确认的草稿写入正式账目。
      */
     suspend fun saveTransaction(draft: TransactionDraft): Long {
         validateTransactionDraft(draft)
-        val snapshot = transactionSnapshot(draft)
-        return dao.insertTransaction(
-            TransactionEntity(
-                type = draft.type,
-                amountMinor = draft.amountMinor,
-                accountAmountMinor = snapshot.accountAmountMinor,
-                accountId = draft.accountId,
-                categoryId = draft.categoryId,
-                merchant = draft.merchant.trim(),
-                note = draft.note.trim(),
-                occurredAt = draft.occurredAt,
-                source = draft.source,
-                ledgerId = draft.ledgerId,
-                currencyKey = snapshot.currencyKey,
-                baseAmountMinor = snapshot.baseAmountMinor,
-                baseCurrencyKey = snapshot.baseCurrencyKey,
-            ),
-        )
+        return dao.insertTransactions(transactionEntities(draft))
     }
 
     /**
@@ -494,12 +676,90 @@ class AccountingRepository(
         dao.archiveCategory(categoryId)
     }
 
-    /**
-     * 校验草稿引用的数据与收支方向，并允许编辑账目继续引用原有停用项。
-     */
-    /**
-     * 按写入时的账户币种与账本位币固化币种与本位币金额快照。
-     */
+    /** 根据既有精确映射和可用账本数据预填自动账单。 */
+    private suspend fun predictAutoBookkeeping(
+        capture: AutoBookkeepingCapture,
+        ledgerId: Long,
+        merchantKey: String,
+        paymentMethodKey: String,
+    ): AutoPrediction {
+        val categoryMapping = merchantKey.takeIf(String::isNotEmpty)?.let {
+            dao.findAutoCategoryMapping(capture.provider, it, capture.type)
+        }
+        val categories = dao.getAllCategories().filter { !it.isArchived && it.type == capture.type }
+        val categoryId = categoryMapping?.categoryId
+            ?: inferAutoCategoryName(capture.merchant)?.let { name ->
+                categories.firstOrNull { it.name == name }?.id
+            }
+        val refs = dao.getAllAccountLedgerCrossRefs().filter { it.ledgerId == ledgerId }
+        val accounts = dao.getAllAccounts().filter { account ->
+            !account.isArchived && refs.any { it.accountId == account.id }
+        }
+        val sourceMapping = paymentMethodKey.takeIf(String::isNotEmpty)?.let {
+            dao.findAutoAccountMapping(capture.provider, it)
+        }
+        val mappedAccount = sourceMapping?.accountId?.takeIf { id ->
+            accounts.any { it.id == id && it.currencyKey == capture.currencyKey }
+        }
+        val accountId = mappedAccount ?: accounts.singleOrNull { it.currencyKey == capture.currencyKey }?.id
+        return AutoPrediction(
+            accountId = accountId,
+            categoryId = categoryId,
+            canConfirm = mappedAccount != null && categoryMapping != null,
+        )
+    }
+
+    /** 表示本地匹配为待确认账单提供的预填字段与置信度。 */
+    private data class AutoPrediction(
+        val accountId: Long?,
+        val categoryId: Long?,
+        val canConfirm: Boolean,
+    )
+
+    /** 承载一次用户确认需要与正式流水原子保存的学习映射。 */
+    private data class AutoMappings(
+        val category: AutoCategoryMappingEntity? = null,
+        val accounts: List<AutoAccountMappingEntity> = emptyList(),
+    )
+
+    /** 把已经补全的自动账单事件转换为统一交易草稿。 */
+    private fun AutoBookkeepingEventEntity.toTransactionDraft(): TransactionDraft = TransactionDraft(
+        type = type,
+        amountMinor = amountMinor,
+        currencyKey = currencyKey,
+        accountAmountMinor = amountMinor,
+        accountId = requireNotNull(accountId),
+        categoryId = categoryId,
+        merchant = merchant,
+        note = note,
+        occurredAt = occurredAt,
+        source = TransactionSource.AI,
+        ledgerId = ledgerId,
+    )
+
+    /** 把一个已校验草稿转换成单条收支账目。 */
+    private suspend fun transactionEntities(draft: TransactionDraft): List<TransactionEntity> {
+        val snapshot = transactionSnapshot(draft)
+        return listOf(
+            TransactionEntity(
+                type = draft.type,
+                amountMinor = draft.amountMinor,
+                accountAmountMinor = snapshot.accountAmountMinor,
+                accountId = draft.accountId,
+                categoryId = draft.categoryId,
+                merchant = draft.merchant.trim(),
+                note = draft.note.trim(),
+                occurredAt = draft.occurredAt,
+                source = draft.source,
+                ledgerId = draft.ledgerId,
+                currencyKey = snapshot.currencyKey,
+                baseAmountMinor = snapshot.baseAmountMinor,
+                baseCurrencyKey = snapshot.baseCurrencyKey,
+            ),
+        )
+    }
+
+    /** 按写入时的账户币种与账本位币固化币种与本位币金额快照。 */
     private suspend fun transactionSnapshot(draft: TransactionDraft): TransactionSnapshot {
         val ledgerId = draft.ledgerId
         val account = dao.findAccount(draft.accountId)
@@ -577,7 +837,14 @@ class AccountingRepository(
         if (account.isArchived && original?.accountId != account.id) {
             throw AccountingWriteException("所选账户已停用")
         }
-        val category = dao.findCategory(draft.categoryId)
+        val keepsOriginalLink = original != null &&
+            original.accountId == account.id &&
+            original.ledgerId == ledgerId
+        if (!keepsOriginalLink && dao.findAccountLedgerCrossRef(account.id, ledgerId) == null) {
+            throw AccountingWriteException("所选账户不属于当前账本")
+        }
+        val categoryId = draft.categoryId ?: throw AccountingWriteException("请选择分类")
+        val category = dao.findCategory(categoryId)
             ?: throw AccountingWriteException("所选分类不存在")
         if (category.isArchived && original?.categoryId != category.id) {
             throw AccountingWriteException("所选分类已停用")
@@ -585,11 +852,56 @@ class AccountingRepository(
         if (category.type != draft.type) {
             throw AccountingWriteException("分类与收支类型不一致")
         }
-        val keepsOriginalLink = original != null &&
-            original.accountId == account.id &&
-            original.ledgerId == ledgerId
-        if (!keepsOriginalLink && dao.findAccountLedgerCrossRef(account.id, ledgerId) == null) {
-            throw AccountingWriteException("所选账户不属于当前账本")
-        }
+    }
+}
+
+private const val AUTO_EVENT_RETENTION_MILLIS = 90L * 24 * 60 * 60 * 1000
+private const val AUTO_DUPLICATE_WINDOW_MILLIS = 3L * 60 * 1000
+
+/** 判断应用设置是否允许采集指定支付平台。 */
+private fun AppSettingsEntity.isProviderEnabled(provider: PaymentProvider): Boolean = when (provider) {
+    PaymentProvider.WECHAT -> autoBookkeepingWechatEnabled
+    PaymentProvider.ALIPAY -> autoBookkeepingAlipayEnabled
+    PaymentProvider.UNIONPAY -> autoBookkeepingUnionPayEnabled
+}
+
+/** 把商户或支付方式转换为稳定、无空白差异的本地映射键。 */
+private fun normalizeAutoKey(value: String): String = value
+    .trim()
+    .lowercase()
+    .replace(Regex("\\s+"), "")
+
+/** 为缺少外部交易号的采集结果生成不含原始页面文本的防重摘要。 */
+private fun autoFingerprint(
+    capture: AutoBookkeepingCapture,
+    merchantKey: String,
+    paymentMethodKey: String,
+): String = sha256(
+    listOf(
+        capture.provider.name,
+        capture.type.name,
+        capture.amountMinor.toString(),
+        merchantKey,
+        paymentMethodKey,
+    ).joinToString("|"),
+)
+
+/** 使用 SHA-256 生成仅供本地比较的十六进制摘要。 */
+private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+    .digest(value.toByteArray(Charsets.UTF_8))
+    .joinToString("") { byte -> "%02x".format(byte) }
+
+/** 根据有限关键词返回分类预填名称，结果不直接取得高置信度。 */
+private fun inferAutoCategoryName(merchant: String): String? {
+    val value = merchant.lowercase()
+    return when {
+        listOf("餐", "咖啡", "奶茶", "美团", "饿了么").any(value::contains) -> "餐饮"
+        listOf("滴滴", "铁路", "公交", "地铁", "加油", "停车").any(value::contains) -> "交通"
+        listOf("淘宝", "京东", "拼多多", "商场", "超市").any(value::contains) -> "购物"
+        listOf("电影", "游戏", "视频", "音乐").any(value::contains) -> "娱乐"
+        listOf("医院", "药房", "诊所").any(value::contains) -> "医疗"
+        listOf("话费", "流量", "宽带").any(value::contains) -> "通讯"
+        listOf("房租", "物业", "水费", "电费", "燃气").any(value::contains) -> "住房"
+        else -> null
     }
 }

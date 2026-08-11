@@ -4,6 +4,9 @@ import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AppSettingsEntity
+import com.vos.accounting.data.AutoAccountMappingEntity
+import com.vos.accounting.data.AutoBookkeepingEventEntity
+import com.vos.accounting.data.AutoCategoryMappingEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
@@ -16,10 +19,10 @@ data class BackupMediaRef(
     val entryName: String,
 )
 
-/** 版本化的全量备份数据，覆盖全部八张持久化表与媒体引用。 */
+/** 版本化的全量备份数据，覆盖全部持久化表与媒体引用。 */
 @Serializable
 data class BackupData(
-    val formatVersion: Int = 3,
+    val formatVersion: Int = 4,
     val createdAt: Long,
     val accounts: List<AccountEntity> = emptyList(),
     val ledgers: List<LedgerEntity> = emptyList(),
@@ -28,6 +31,9 @@ data class BackupData(
     val currencies: List<CurrencyEntity> = emptyList(),
     val categories: List<CategoryEntity> = emptyList(),
     val transactions: List<TransactionEntity> = emptyList(),
+    val autoBookkeepingEvents: List<AutoBookkeepingEventEntity> = emptyList(),
+    val autoCategoryMappings: List<AutoCategoryMappingEntity> = emptyList(),
+    val autoAccountMappings: List<AutoAccountMappingEntity> = emptyList(),
     val settings: AppSettingsEntity? = null,
     val media: List<BackupMediaRef> = emptyList(),
 )

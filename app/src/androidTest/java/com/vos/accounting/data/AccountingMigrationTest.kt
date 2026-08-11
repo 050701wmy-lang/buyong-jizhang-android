@@ -587,6 +587,85 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v18 升级后新增退款、转账、AI 设置与三张自动账单表。 */
+    @Test
+    fun migrateVersionEighteenToVersionNineteen() {
+        helper.createDatabase(DATABASE_NAME, 18).close()
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            19,
+            true,
+            AccountingDatabase.MIGRATION_18_19,
+        )
+        migrated.query(
+            "SELECT name FROM pragma_table_info('transactions') " +
+                "WHERE name IN ('refund_of_transaction_id', 'transfer_id') ORDER BY name",
+        ).use {
+            assertEquals(2, it.count)
+        }
+        migrated.query(
+            "SELECT dflt_value FROM pragma_table_info('app_settings') " +
+                "WHERE name = 'auto_bookkeeping_enabled'",
+        ).use {
+            it.moveToFirst()
+            assertEquals("0", it.getString(0))
+        }
+        migrated.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'auto_%' ORDER BY name",
+        ).use {
+            assertEquals(3, it.count)
+        }
+        migrated.close()
+    }
+
+    /** 验证 v19 升级后退款和转账被转换为普通收支。 */
+    @Test
+    fun migrateVersionNineteenToVersionTwenty() {
+        helper.createDatabase(DATABASE_NAME, 19).apply {
+            execSQL(
+                "INSERT INTO currencies (`key`, code, name, symbol, rate_to_cny_scaled, is_builtin, updated_at, auto_rate_enabled) " +
+                    "VALUES ('cny','CNY','人民币','¥',100000000,1,0,1)",
+            )
+            execSQL(
+                "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) " +
+                    "VALUES (1,'日常账本','cover_ocean',1,'cny',0,0)",
+            )
+            execSQL(
+                "INSERT INTO accounts (id, name, type, type_key, currency_key, opening_balance_minor, sort_order, icon_key, is_default, is_archived) " +
+                    "VALUES (1,'现金','CASH','cash','cny',0,0,'cash',1,0)",
+            )
+            execSQL(
+                "INSERT INTO transactions (id, type, amount_minor, account_amount_minor, account_id, category_id, merchant, note, occurred_at, source, ledger_id, currency_key, base_amount_minor, base_currency_key, exchange_id, transfer_direction, refund_of_transaction_id, transfer_id) VALUES " +
+                    "(1,'REFUND',100,100,1,NULL,'','',1,'AI',1,'cny',100,'cny',NULL,NULL,NULL,NULL)," +
+                    "(2,'TRANSFER',200,200,1,NULL,'','',2,'AI',1,'cny',200,'cny',NULL,'OUT',NULL,'pair')," +
+                    "(3,'TRANSFER',200,200,1,NULL,'','',3,'AI',1,'cny',200,'cny',NULL,'IN',NULL,'pair')",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            20,
+            true,
+            AccountingDatabase.MIGRATION_19_20,
+        )
+        migrated.query(
+            "SELECT type, transfer_direction, refund_of_transaction_id, transfer_id FROM transactions ORDER BY id",
+        ).use {
+            it.moveToFirst()
+            assertEquals("INCOME", it.getString(0))
+            assertEquals(true, it.isNull(1) && it.isNull(2) && it.isNull(3))
+            it.moveToNext()
+            assertEquals("EXPENSE", it.getString(0))
+            assertEquals(true, it.isNull(1) && it.isNull(2) && it.isNull(3))
+            it.moveToNext()
+            assertEquals("INCOME", it.getString(0))
+            assertEquals(true, it.isNull(1) && it.isNull(2) && it.isNull(3))
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */

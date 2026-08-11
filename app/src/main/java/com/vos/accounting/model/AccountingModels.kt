@@ -10,23 +10,12 @@ const val MAX_AMOUNT_MINOR = 99_999_999_999L
 const val MAX_RATE_TO_CNY_SCALED = 1_000_000_000_000L
 
 /**
- * 表示账目的收支方向，转账流水不参与普通收支统计。
+ * 表示账目的收支方向。
  */
 @Serializable
 enum class TransactionType {
     EXPENSE,
     INCOME,
-    REFUND,
-    TRANSFER,
-}
-
-/**
- * 表示转账流水在账户中的出入方向。
- */
-@Serializable
-enum class TransferDirection {
-    IN,
-    OUT,
 }
 
 /**
@@ -67,9 +56,6 @@ data class TransactionDraft(
     val occurredAt: Long,
     val source: TransactionSource,
     val ledgerId: Long = 1,
-    val destinationAccountId: Long? = null,
-    val destinationAmountMinor: Long? = null,
-    val refundOfTransactionId: Long? = null,
 )
 
 /**

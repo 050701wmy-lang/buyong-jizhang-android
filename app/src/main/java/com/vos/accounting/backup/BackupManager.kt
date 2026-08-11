@@ -50,6 +50,9 @@ class BackupManager(
             currencies = dao.getAllCurrencies(),
             categories = dao.getAllCategories(),
             transactions = dao.getAllTransactions(),
+            autoBookkeepingEvents = dao.getAllAutoBookkeepingEvents(),
+            autoCategoryMappings = dao.getAllAutoCategoryMappings(),
+            autoAccountMappings = dao.getAllAutoAccountMappings(),
             settings = dao.getSettings(),
             media = mediaRefs,
         )
@@ -87,6 +90,9 @@ class BackupManager(
             categories = data.categories,
             crossRefs = data.accountLedgerCrossRefs,
             transactions = restoreTransactionSnapshots(data.transactions, data.ledgers),
+            autoBookkeepingEvents = data.autoBookkeepingEvents,
+            autoCategoryMappings = data.autoCategoryMappings,
+            autoAccountMappings = data.autoAccountMappings,
             settings = data.settings,
         )
     }

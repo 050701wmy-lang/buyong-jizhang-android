@@ -37,7 +37,6 @@ import com.vos.accounting.data.AccountExchangeLink
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.icon.basic.ArrowUpDown
 import top.yukonga.miuix.kmp.basic.FabPosition
@@ -92,10 +91,10 @@ fun AccountDetailScreen(
             .map { links -> links.map(AccountExchangeLink::accountId).toSet() },
     )
     val exchangeSources = transactions
-        .filter { it.transferDirection == TransferDirection.OUT && it.exchangeId != null }
+        .filter { it.type == TransactionType.EXPENSE && it.exchangeId != null }
         .associateBy { it.exchangeId!! }
     val accountTransactions = transactions.filter {
-        it.accountId in accountIds && it.transferDirection != TransferDirection.OUT
+        it.accountId in accountIds && !(it.type == TransactionType.EXPENSE && it.exchangeId != null)
     }
     val monthlyTransactions = accountTransactions
         .groupBy(::accountRecordMonth)
@@ -331,7 +330,7 @@ private fun AccountMonthCard(
     coloredTransactionAmountsEnabled: Boolean,
     onEditTransaction: (Long) -> Unit,
 ) {
-    val summaryRecords = records.filter { it.type != TransactionType.TRANSFER }
+    val summaryRecords = records.filter { it.exchangeId == null }
     val summaryCurrencySymbols = summaryRecords.map(TransactionRecord::accountCurrencySymbol).distinct()
     val inflow = summaryRecords
         .filter { it.type == TransactionType.INCOME }
@@ -388,11 +387,11 @@ private fun AccountTransactionRow(
     coloredTransactionAmountsEnabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val isTransfer = record.type == TransactionType.TRANSFER
+    val isExchange = record.exchangeId != null
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !isTransfer, onClick = onClick)
+            .clickable(enabled = !isExchange, onClick = onClick)
             .padding(
                 horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
                 vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
@@ -408,12 +407,12 @@ private fun AccountTransactionRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            val iconOption = if (isTransfer) {
+            val iconOption = if (isExchange) {
                 null
             } else {
                 categoryIconOption(record.categoryIconKey, record.categoryName)
             }
-            if (isTransfer) {
+            if (isExchange) {
                 Icon(
                     imageVector = MiuixIcons.Basic.ArrowUpDown,
                     contentDescription = null,
@@ -433,7 +432,7 @@ private fun AccountTransactionRow(
                 .padding(start = 12.dp),
         ) {
             Text(
-                text = if (isTransfer) "币种兑换" else record.merchant.ifBlank { record.categoryName },
+                text = transactionDisplayTitle(record),
                 fontWeight = FontWeight.Medium,
                 style = MiuixTheme.textStyles.body1,
             )
@@ -444,7 +443,7 @@ private fun AccountTransactionRow(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        val sign = if (record.type == TransactionType.EXPENSE) "-" else "+"
+        val sign = transactionAmountSign(record)
         Column(horizontalAlignment = Alignment.End) {
             Text(
                 text = if (exchangeSource == null) {

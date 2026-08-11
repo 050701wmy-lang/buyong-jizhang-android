@@ -44,6 +44,5 @@ data class AutoBookkeepingCapture(
     val note: String = "",
     val occurredAt: Long,
     val paymentMethodKey: String = "",
-    val destinationPaymentMethodKey: String = "",
     val externalKeyHash: String? = null,
 )

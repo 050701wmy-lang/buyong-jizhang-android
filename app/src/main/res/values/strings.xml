@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">随记</string>
+    <string name="auto_bookkeeping_service_name">随记 AI 记账</string>
+    <string name="auto_bookkeeping_notification_listener_name">随记账单通知读取</string>
+    <string name="auto_bookkeeping_accessibility_description">仅在微信、支付宝和云闪付中识别支付结果并生成待确认账单，不保存完整页面内容。</string>
 </resources>

@@ -18,9 +18,11 @@ import androidx.room.Update
 import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
 import com.vos.accounting.model.AccountType
+import com.vos.accounting.model.AutoBookkeepingStatus
+import com.vos.accounting.model.NotificationPrivacyMode
+import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.flow.Flow
 
@@ -273,6 +275,16 @@ data class AppSettingsEntity(
     val coloredTransactionAmountsEnabled: Boolean = false,
     @ColumnInfo(name = "current_ledger_id", defaultValue = "1")
     val currentLedgerId: Long = 1,
+    @ColumnInfo(name = "auto_bookkeeping_enabled", defaultValue = "0")
+    val autoBookkeepingEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_bookkeeping_wechat_enabled", defaultValue = "1")
+    val autoBookkeepingWechatEnabled: Boolean = true,
+    @ColumnInfo(name = "auto_bookkeeping_alipay_enabled", defaultValue = "1")
+    val autoBookkeepingAlipayEnabled: Boolean = true,
+    @ColumnInfo(name = "auto_bookkeeping_unionpay_enabled", defaultValue = "1")
+    val autoBookkeepingUnionPayEnabled: Boolean = true,
+    @ColumnInfo(name = "notification_privacy_mode", defaultValue = "'HIDE_ON_LOCK_SCREEN'")
+    val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
 )
 
 /**
@@ -350,7 +362,97 @@ data class TransactionEntity(
     @ColumnInfo(name = "exchange_id")
     val exchangeId: Long? = null,
     @ColumnInfo(name = "transfer_direction")
-    val transferDirection: TransferDirection? = null,
+    val transferDirection: String? = null,
+    @ColumnInfo(name = "refund_of_transaction_id")
+    val refundOfTransactionId: Long? = null,
+    @ColumnInfo(name = "transfer_id")
+    val transferId: String? = null,
+)
+
+/** 表示由支付页面或通知提取、等待用户确认的账单事件。 */
+@Entity(
+    tableName = "auto_bookkeeping_events",
+    indices = [
+        Index(value = ["external_key_hash"], unique = true),
+        Index(value = ["fingerprint", "occurred_at"]),
+        Index(value = ["status", "updated_at"]),
+    ],
+)
+@Serializable
+data class AutoBookkeepingEventEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val provider: PaymentProvider,
+    val status: AutoBookkeepingStatus = AutoBookkeepingStatus.PENDING,
+    val type: TransactionType,
+    @ColumnInfo(name = "amount_minor")
+    val amountMinor: Long,
+    @ColumnInfo(name = "destination_amount_minor")
+    val destinationAmountMinor: Long? = null,
+    @ColumnInfo(name = "currency_key")
+    val currencyKey: String = "cny",
+    @ColumnInfo(name = "account_id")
+    val accountId: Long? = null,
+    @ColumnInfo(name = "destination_account_id")
+    val destinationAccountId: Long? = null,
+    @ColumnInfo(name = "category_id")
+    val categoryId: Long? = null,
+    @ColumnInfo(name = "refund_of_transaction_id")
+    val refundOfTransactionId: Long? = null,
+    val merchant: String,
+    val note: String,
+    @ColumnInfo(name = "occurred_at")
+    val occurredAt: Long,
+    @ColumnInfo(name = "payment_method_key")
+    val paymentMethodKey: String,
+    @ColumnInfo(name = "destination_payment_method_key")
+    val destinationPaymentMethodKey: String,
+    @ColumnInfo(name = "external_key_hash")
+    val externalKeyHash: String? = null,
+    val fingerprint: String,
+    @ColumnInfo(name = "capture_sources")
+    val captureSources: String,
+    @ColumnInfo(name = "can_confirm")
+    val canConfirm: Boolean = false,
+    @ColumnInfo(name = "ledger_id")
+    val ledgerId: Long,
+    @ColumnInfo(name = "confirmed_transaction_id")
+    val confirmedTransactionId: Long? = null,
+    @ColumnInfo(name = "created_at")
+    val createdAt: Long,
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Long,
+)
+
+/** 记录用户确认后的商户与分类精确映射。 */
+@Entity(
+    tableName = "auto_category_mappings",
+    primaryKeys = ["provider", "merchant_key", "type"],
+    indices = [Index("category_id")],
+)
+@Serializable
+data class AutoCategoryMappingEntity(
+    val provider: PaymentProvider,
+    @ColumnInfo(name = "merchant_key")
+    val merchantKey: String,
+    val type: TransactionType,
+    @ColumnInfo(name = "category_id")
+    val categoryId: Long,
+)
+
+/** 记录用户确认后的支付方式与账户精确映射。 */
+@Entity(
+    tableName = "auto_account_mappings",
+    primaryKeys = ["provider", "payment_method_key"],
+    indices = [Index("account_id")],
+)
+@Serializable
+data class AutoAccountMappingEntity(
+    val provider: PaymentProvider,
+    @ColumnInfo(name = "payment_method_key")
+    val paymentMethodKey: String,
+    @ColumnInfo(name = "account_id")
+    val accountId: Long,
 )
 
 /**
@@ -397,7 +499,11 @@ data class TransactionRecord(
     @ColumnInfo(name = "exchange_id")
     val exchangeId: Long?,
     @ColumnInfo(name = "transfer_direction")
-    val transferDirection: TransferDirection?,
+    val transferDirection: String?,
+    @ColumnInfo(name = "refund_of_transaction_id")
+    val refundOfTransactionId: Long?,
+    @ColumnInfo(name = "transfer_id")
+    val transferId: String?,
 )
 
 /**
@@ -454,7 +560,9 @@ private const val TRANSACTION_SELECT =
             account_currencies.symbol AS account_currency_symbol,
             transaction_currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
             transactions.exchange_id AS exchange_id,
-            transactions.transfer_direction AS transfer_direction
+            transactions.transfer_direction AS transfer_direction,
+            transactions.refund_of_transaction_id AS refund_of_transaction_id,
+            transactions.transfer_id AS transfer_id
         FROM transactions
         INNER JOIN accounts ON accounts.id = transactions.account_id
         LEFT JOIN categories ON categories.id = transactions.category_id
@@ -519,8 +627,6 @@ interface AccountingDao {
                 SUM(
                     CASE
                         WHEN transactions.type = 'INCOME' THEN transactions.account_amount_minor
-                        WHEN transactions.type = 'TRANSFER' AND transactions.transfer_direction = 'IN'
-                            THEN transactions.account_amount_minor
                         ELSE -transactions.account_amount_minor
                     END
                 ),
@@ -571,6 +677,10 @@ interface AccountingDao {
     @Query("SELECT * FROM app_settings WHERE id = 1")
     fun observeSettings(): Flow<AppSettingsEntity?>
 
+    /** 持续观察尚未由用户处理的自动账单。 */
+    @Query("SELECT * FROM auto_bookkeeping_events WHERE status = 'PENDING' ORDER BY occurred_at DESC, id DESC")
+    fun observePendingAutoBookkeepingEvents(): Flow<List<AutoBookkeepingEventEntity>>
+
     /**
      * 写入应用外观设置。
      */
@@ -598,6 +708,26 @@ interface AccountingDao {
     /** 只更新收支金额是否使用红绿字体。 */
     @Query("UPDATE app_settings SET colored_transaction_amounts_enabled = :enabled WHERE id = 1")
     suspend fun updateColoredTransactionAmountsEnabled(enabled: Boolean)
+
+    /** 更新自动记账总开关。 */
+    @Query("UPDATE app_settings SET auto_bookkeeping_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoBookkeepingEnabled(enabled: Boolean)
+
+    /** 更新微信账单来源开关。 */
+    @Query("UPDATE app_settings SET auto_bookkeeping_wechat_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoBookkeepingWechatEnabled(enabled: Boolean)
+
+    /** 更新支付宝账单来源开关。 */
+    @Query("UPDATE app_settings SET auto_bookkeeping_alipay_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoBookkeepingAlipayEnabled(enabled: Boolean)
+
+    /** 更新云闪付账单来源开关。 */
+    @Query("UPDATE app_settings SET auto_bookkeeping_unionpay_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoBookkeepingUnionPayEnabled(enabled: Boolean)
+
+    /** 更新账单通知的隐私展示策略。 */
+    @Query("UPDATE app_settings SET notification_privacy_mode = :mode WHERE id = 1")
+    suspend fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode)
 
     /** 返回应用设置中记录的当前账本标识。 */
     @Query("SELECT current_ledger_id FROM app_settings WHERE id = 1")
@@ -659,6 +789,18 @@ interface AccountingDao {
     @Query("SELECT * FROM transactions ORDER BY id")
     suspend fun getAllTransactions(): List<TransactionEntity>
 
+    /** 返回全部自动账单事件。 */
+    @Query("SELECT * FROM auto_bookkeeping_events ORDER BY id")
+    suspend fun getAllAutoBookkeepingEvents(): List<AutoBookkeepingEventEntity>
+
+    /** 返回全部商户分类映射。 */
+    @Query("SELECT * FROM auto_category_mappings ORDER BY provider, merchant_key, type")
+    suspend fun getAllAutoCategoryMappings(): List<AutoCategoryMappingEntity>
+
+    /** 返回全部支付账户映射。 */
+    @Query("SELECT * FROM auto_account_mappings ORDER BY provider, payment_method_key")
+    suspend fun getAllAutoAccountMappings(): List<AutoAccountMappingEntity>
+
     /** 返回应用设置单行。 */
     @Query("SELECT * FROM app_settings WHERE id = 1")
     suspend fun getSettings(): AppSettingsEntity?
@@ -666,6 +808,18 @@ interface AccountingDao {
     /** 清空全部账目。 */
     @Query("DELETE FROM transactions")
     suspend fun deleteAllTransactions()
+
+    /** 清空全部自动账单事件。 */
+    @Query("DELETE FROM auto_bookkeeping_events")
+    suspend fun deleteAllAutoBookkeepingEvents()
+
+    /** 清空全部商户分类映射。 */
+    @Query("DELETE FROM auto_category_mappings")
+    suspend fun deleteAllAutoCategoryMappings()
+
+    /** 清空全部支付账户映射。 */
+    @Query("DELETE FROM auto_account_mappings")
+    suspend fun deleteAllAutoAccountMappings()
 
     /** 清空全部账户-账本关联。 */
     @Query("DELETE FROM account_ledger_cross_ref")
@@ -705,8 +859,14 @@ interface AccountingDao {
         categories: List<CategoryEntity>,
         crossRefs: List<AccountLedgerCrossRef>,
         transactions: List<TransactionEntity>,
+        autoBookkeepingEvents: List<AutoBookkeepingEventEntity>,
+        autoCategoryMappings: List<AutoCategoryMappingEntity>,
+        autoAccountMappings: List<AutoAccountMappingEntity>,
         settings: AppSettingsEntity?,
     ) {
+        deleteAllAutoBookkeepingEvents()
+        deleteAllAutoCategoryMappings()
+        deleteAllAutoAccountMappings()
         deleteAllTransactions()
         deleteAllAccountLedgerCrossRefs()
         deleteAllSettings()
@@ -722,6 +882,9 @@ interface AccountingDao {
         if (categories.isNotEmpty()) insertCategories(categories)
         if (crossRefs.isNotEmpty()) insertAccountLedgerCrossRefs(crossRefs)
         transactions.forEach { insertTransaction(it) }
+        autoBookkeepingEvents.forEach { insertAutoBookkeepingEvent(it) }
+        autoCategoryMappings.forEach { upsertAutoCategoryMapping(it) }
+        autoAccountMappings.forEach { upsertAutoAccountMapping(it) }
         upsertSettings(settings ?: AppSettingsEntity())
         ensureDefaultAccount()
         ensureCurrentLedger()
@@ -1022,12 +1185,7 @@ interface AccountingDao {
         ledgerIds: Set<Long>,
     ): Long {
         val balanceMinor = existing.openingBalanceMinor + transactionsByAccount(existing.id).sumOf { record ->
-            when {
-                record.type == TransactionType.INCOME -> record.accountAmountMinor
-                record.type == TransactionType.TRANSFER &&
-                    record.transferDirection == TransferDirection.IN -> record.accountAmountMinor
-                else -> -record.accountAmountMinor
-            }
+            if (record.type == TransactionType.INCOME) record.accountAmountMinor else -record.accountAmountMinor
         }
         val oldCurrency = findCurrency(existing.currencyKey)
             ?: throw AccountingWriteException("账户币种不存在")
@@ -1050,7 +1208,7 @@ interface AccountingDao {
         insertAccountLedgerCrossRefs(ledgerIds.map { AccountLedgerCrossRef(newAccountId, it) })
         insertTransaction(
             TransactionEntity(
-                type = TransactionType.TRANSFER,
+                type = TransactionType.EXPENSE,
                 amountMinor = balanceMinor,
                 accountAmountMinor = balanceMinor,
                 accountId = existing.id,
@@ -1068,7 +1226,6 @@ interface AccountingDao {
                 ),
                 baseCurrencyKey = baseCurrency.key,
                 exchangeId = exchangeId,
-                transferDirection = TransferDirection.OUT,
             ),
         )
         val newAmountMinor = convertCurrencyMinor(
@@ -1078,7 +1235,7 @@ interface AccountingDao {
         )
         insertTransaction(
             TransactionEntity(
-                type = TransactionType.TRANSFER,
+                type = TransactionType.INCOME,
                 amountMinor = newAmountMinor,
                 accountAmountMinor = newAmountMinor,
                 accountId = newAccountId,
@@ -1096,7 +1253,6 @@ interface AccountingDao {
                 ),
                 baseCurrencyKey = baseCurrency.key,
                 exchangeId = exchangeId,
-                transferDirection = TransferDirection.IN,
             ),
         )
         markAccountArchived(existing.id)
@@ -1180,6 +1336,132 @@ interface AccountingDao {
      */
     @Insert
     suspend fun insertTransaction(transaction: TransactionEntity): Long
+
+    /** 在同一事务中插入一组属于同一业务动作的正式流水。 */
+    @Transaction
+    suspend fun insertTransactions(transactions: List<TransactionEntity>): Long {
+        var visibleTransactionId = 0L
+        transactions.forEach { transaction ->
+            visibleTransactionId = insertTransaction(transaction)
+        }
+        return visibleTransactionId
+    }
+
+    /** 返回指定自动账单事件。 */
+    @Query("SELECT * FROM auto_bookkeeping_events WHERE id = :eventId")
+    suspend fun findAutoBookkeepingEvent(eventId: Long): AutoBookkeepingEventEntity?
+
+    /** 按外部交易摘要返回已有自动账单事件。 */
+    @Query("SELECT * FROM auto_bookkeeping_events WHERE external_key_hash = :externalKeyHash LIMIT 1")
+    suspend fun findAutoBookkeepingEventByExternalKey(externalKeyHash: String): AutoBookkeepingEventEntity?
+
+    /** 按本地指纹与时间窗口返回可能重复的自动账单事件。 */
+    @Query(
+        """
+        SELECT * FROM auto_bookkeeping_events
+        WHERE provider = :provider
+          AND fingerprint = :fingerprint
+          AND occurred_at BETWEEN :fromTime AND :toTime
+        ORDER BY ABS(occurred_at - :occurredAt), id DESC
+        LIMIT 1
+        """,
+    )
+    suspend fun findAutoBookkeepingEventByFingerprint(
+        provider: PaymentProvider,
+        fingerprint: String,
+        occurredAt: Long,
+        fromTime: Long,
+        toTime: Long,
+    ): AutoBookkeepingEventEntity?
+
+    /** 插入一条自动账单事件，摘要冲突时由调用方重新读取既有事件。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAutoBookkeepingEvent(event: AutoBookkeepingEventEntity): Long
+
+    /** 更新自动账单的补全字段与采集来源。 */
+    @Update
+    suspend fun updateAutoBookkeepingEvent(event: AutoBookkeepingEventEntity): Int
+
+    /** 把待确认自动账单标记为忽略。 */
+    @Query(
+        """
+        UPDATE auto_bookkeeping_events
+        SET status = 'IGNORED', updated_at = :updatedAt
+        WHERE id = :eventId AND status = 'PENDING'
+        """,
+    )
+    suspend fun ignoreAutoBookkeepingEvent(eventId: Long, updatedAt: Long): Int
+
+    /** 删除超过保留期限且已经处理的自动账单事件。 */
+    @Query("DELETE FROM auto_bookkeeping_events WHERE status != 'PENDING' AND updated_at < :threshold")
+    suspend fun deleteProcessedAutoBookkeepingEventsBefore(threshold: Long): Int
+
+    /** 返回指定商户已经确认的分类映射。 */
+    @Query(
+        """
+        SELECT * FROM auto_category_mappings
+        WHERE provider = :provider AND merchant_key = :merchantKey AND type = :type
+        """,
+    )
+    suspend fun findAutoCategoryMapping(
+        provider: PaymentProvider,
+        merchantKey: String,
+        type: TransactionType,
+    ): AutoCategoryMappingEntity?
+
+    /** 写入或替换商户分类映射。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAutoCategoryMapping(mapping: AutoCategoryMappingEntity)
+
+    /** 返回指定支付方式已经确认的账户映射。 */
+    @Query(
+        """
+        SELECT * FROM auto_account_mappings
+        WHERE provider = :provider AND payment_method_key = :paymentMethodKey
+        """,
+    )
+    suspend fun findAutoAccountMapping(
+        provider: PaymentProvider,
+        paymentMethodKey: String,
+    ): AutoAccountMappingEntity?
+
+    /** 写入或替换支付方式账户映射。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAutoAccountMapping(mapping: AutoAccountMappingEntity)
+
+    /** 在同一事务中写入正式流水并把自动账单标记为已经确认。 */
+    @Transaction
+    suspend fun confirmAutoBookkeepingEvent(
+        eventId: Long,
+        transactions: List<TransactionEntity>,
+        updatedEvent: AutoBookkeepingEventEntity,
+        categoryMapping: AutoCategoryMappingEntity?,
+        accountMappings: List<AutoAccountMappingEntity>,
+    ): Long {
+        val current = findAutoBookkeepingEvent(eventId)
+            ?: throw IllegalArgumentException("待确认账单不存在")
+        if (current.status == AutoBookkeepingStatus.CONFIRMED) {
+            return current.confirmedTransactionId ?: 0L
+        }
+        if (current.status != AutoBookkeepingStatus.PENDING) {
+            throw IllegalArgumentException("待确认账单已经处理")
+        }
+        var visibleTransactionId = 0L
+        transactions.forEach { transaction ->
+            visibleTransactionId = insertTransaction(transaction)
+        }
+        categoryMapping?.let { upsertAutoCategoryMapping(it) }
+        accountMappings.forEach { upsertAutoAccountMapping(it) }
+        val changed = updateAutoBookkeepingEvent(
+            updatedEvent.copy(
+                id = eventId,
+                status = AutoBookkeepingStatus.CONFIRMED,
+                confirmedTransactionId = visibleTransactionId,
+            ),
+        )
+        check(changed == 1) { "待确认账单状态更新失败" }
+        return visibleTransactionId
+    }
 
     /**
      * 更新一笔已有账目。
@@ -1321,9 +1603,12 @@ interface AccountingDao {
         CurrencyEntity::class,
         CategoryEntity::class,
         TransactionEntity::class,
+        AutoBookkeepingEventEntity::class,
+        AutoCategoryMappingEntity::class,
+        AutoAccountMappingEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 18,
+    version = 20,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1358,6 +1643,8 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
+            MIGRATION_18_19,
+            MIGRATION_19_20,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2051,6 +2338,136 @@ abstract class AccountingDatabase : RoomDatabase() {
             override fun migrate(connection: SQLiteConnection) {
                 connection.executeMigrationSql(
                     "ALTER TABLE app_settings ADD COLUMN colored_transaction_amounts_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        internal val MIGRATION_18_19 = object : Migration(18, 19) {
+            /** 增加待确认自动账单、学习映射、退款与普通账户转账所需字段。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE transactions ADD COLUMN refund_of_transaction_id INTEGER",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE transactions ADD COLUMN transfer_id TEXT",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_bookkeeping_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_bookkeeping_wechat_enabled INTEGER NOT NULL DEFAULT 1",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_bookkeeping_alipay_enabled INTEGER NOT NULL DEFAULT 1",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_bookkeeping_unionpay_enabled INTEGER NOT NULL DEFAULT 1",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN notification_privacy_mode TEXT NOT NULL DEFAULT 'HIDE_ON_LOCK_SCREEN'",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_bookkeeping_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        provider TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        amount_minor INTEGER NOT NULL,
+                        destination_amount_minor INTEGER,
+                        currency_key TEXT NOT NULL,
+                        account_id INTEGER,
+                        destination_account_id INTEGER,
+                        category_id INTEGER,
+                        refund_of_transaction_id INTEGER,
+                        merchant TEXT NOT NULL,
+                        note TEXT NOT NULL,
+                        occurred_at INTEGER NOT NULL,
+                        payment_method_key TEXT NOT NULL,
+                        destination_payment_method_key TEXT NOT NULL,
+                        external_key_hash TEXT,
+                        fingerprint TEXT NOT NULL,
+                        capture_sources TEXT NOT NULL,
+                        can_confirm INTEGER NOT NULL,
+                        ledger_id INTEGER NOT NULL,
+                        confirmed_transaction_id INTEGER,
+                        created_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE UNIQUE INDEX index_auto_bookkeeping_events_external_key_hash ON auto_bookkeeping_events (external_key_hash)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_auto_bookkeeping_events_fingerprint_occurred_at ON auto_bookkeeping_events (fingerprint, occurred_at)",
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_auto_bookkeeping_events_status_updated_at ON auto_bookkeeping_events (status, updated_at)",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_category_mappings (
+                        provider TEXT NOT NULL,
+                        merchant_key TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        category_id INTEGER NOT NULL,
+                        PRIMARY KEY(provider, merchant_key, type)
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_auto_category_mappings_category_id ON auto_category_mappings (category_id)",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_account_mappings (
+                        provider TEXT NOT NULL,
+                        payment_method_key TEXT NOT NULL,
+                        account_id INTEGER NOT NULL,
+                        PRIMARY KEY(provider, payment_method_key)
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE INDEX index_auto_account_mappings_account_id ON auto_account_mappings (account_id)",
+                )
+            }
+        }
+
+        internal val MIGRATION_19_20 = object : Migration(19, 20) {
+            /** 将退款和转账账目收敛为普通收入或支出。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    """
+                    UPDATE transactions
+                    SET type = CASE
+                            WHEN type = 'REFUND' THEN 'INCOME'
+                            WHEN type = 'TRANSFER' AND transfer_direction = 'IN' THEN 'INCOME'
+                            WHEN type = 'TRANSFER' THEN 'EXPENSE'
+                            ELSE type
+                        END,
+                        transfer_direction = NULL,
+                        refund_of_transaction_id = NULL,
+                        transfer_id = NULL
+                    WHERE type IN ('REFUND', 'TRANSFER')
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    UPDATE auto_bookkeeping_events
+                    SET type = CASE WHEN type = 'REFUND' THEN 'INCOME' ELSE 'EXPENSE' END,
+                        destination_amount_minor = NULL,
+                        destination_account_id = NULL,
+                        category_id = NULL,
+                        refund_of_transaction_id = NULL,
+                        destination_payment_method_key = '',
+                        can_confirm = 0
+                    WHERE type IN ('REFUND', 'TRANSFER')
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "DELETE FROM auto_category_mappings WHERE type IN ('REFUND', 'TRANSFER')",
                 )
             }
         }

@@ -4,14 +4,18 @@ import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AppSettingsEntity
+import com.vos.accounting.data.AutoAccountMappingEntity
+import com.vos.accounting.data.AutoBookkeepingEventEntity
+import com.vos.accounting.data.AutoCategoryMappingEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
 import com.vos.accounting.data.TransactionEntity
 import com.vos.accounting.model.AccountType
+import com.vos.accounting.model.AutoBookkeepingStatus
+import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -140,7 +144,7 @@ class BackupCodecTest {
             transactions = listOf(
                 TransactionEntity(
                     id = 4,
-                    type = TransactionType.TRANSFER,
+                    type = TransactionType.INCOME,
                     amountMinor = 100,
                     accountId = 2,
                     categoryId = null,
@@ -154,7 +158,6 @@ class BackupCodecTest {
                     baseCurrencyKey = "cny",
                     accountAmountMinor = 100,
                     exchangeId = 9,
-                    transferDirection = TransferDirection.IN,
                 ),
             ),
             settings = AppSettingsEntity(
@@ -171,9 +174,52 @@ class BackupCodecTest {
         assertEquals(2, restored.accounts.single().id)
         assertEquals("usd", restored.accounts.single().currencyKey)
         assertEquals(1, restored.ledgers.single().id)
-        assertEquals(TransferDirection.IN, restored.transactions.single().transferDirection)
+        assertEquals(TransactionType.INCOME, restored.transactions.single().type)
         assertEquals(9L, restored.transactions.single().exchangeId)
         assertEquals(1, restored.settings?.currentLedgerId ?: 0)
         assertEquals(1, restored.accountLedgerCrossRefs.single().ledgerId)
+    }
+
+    /** 验证 v4 备份保留待确认草稿和两类本地学习映射。 */
+    @Test
+    fun versionFourPreservesAutoBookkeepingData() {
+        val event = AutoBookkeepingEventEntity(
+            id = 8,
+            provider = PaymentProvider.WECHAT,
+            status = AutoBookkeepingStatus.PENDING,
+            type = TransactionType.EXPENSE,
+            amountMinor = 1234,
+            accountId = 2,
+            categoryId = 3,
+            merchant = "商店",
+            note = "",
+            occurredAt = 10,
+            paymentMethodKey = "零钱",
+            destinationPaymentMethodKey = "",
+            externalKeyHash = "hash",
+            fingerprint = "fingerprint",
+            captureSources = "NOTIFICATION",
+            canConfirm = true,
+            ledgerId = 1,
+            createdAt = 10,
+            updatedAt = 10,
+        )
+        val data = BackupData(
+            createdAt = 10,
+            autoBookkeepingEvents = listOf(event),
+            autoCategoryMappings = listOf(
+                AutoCategoryMappingEntity(PaymentProvider.WECHAT, "商店", TransactionType.EXPENSE, 3),
+            ),
+            autoAccountMappings = listOf(
+                AutoAccountMappingEntity(PaymentProvider.WECHAT, "零钱", 2),
+            ),
+        )
+
+        val restored = BackupCodec.unzip(BackupCodec.buildZip(data, emptyMap())).data
+
+        assertEquals(4, restored.formatVersion)
+        assertEquals(event, restored.autoBookkeepingEvents.single())
+        assertEquals(3, restored.autoCategoryMappings.single().categoryId)
+        assertEquals(2, restored.autoAccountMappings.single().accountId)
     }
 }

@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
@@ -17,8 +18,11 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
+import com.vos.accounting.auto.AutoBookkeepingNotificationManager
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.data.LedgerEntity
+import com.vos.accounting.model.TransactionDraft
+import com.vos.accounting.model.TransactionSource
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -117,11 +121,26 @@ data object SettingsRoute : AccountingRoute
 @Serializable
 data object BackupRoute : AccountingRoute
 
+/** 表示 AI 记账设置二级页面。 */
+@Serializable
+data object AutoBookkeepingSettingsRoute : AccountingRoute
+
+/** 表示全部待确认自动账单列表。 */
+@Serializable
+data object AutoBookkeepingPendingRoute : AccountingRoute
+
+/** 表示指定待确认自动账单的编辑页面。 */
+@Serializable
+data class AutoBookkeepingEventRoute(val eventId: Long) : AccountingRoute
+
 /**
  * 建立 MIUIX 主题、共享模糊内容层与 Navigation 3 页面栈。
  */
 @Composable
-fun AccountingApp() {
+fun AccountingApp(
+    initialAutoBookkeepingEventId: Long? = null,
+    onInitialAutoBookkeepingEventConsumed: () -> Unit = {},
+) {
     val application = LocalContext.current.applicationContext as AccountingApplication
     val viewModel: AccountingViewModel = viewModel(
         factory = AccountingViewModel.factory(application.repository, application.backupManager),
@@ -130,6 +149,9 @@ fun AccountingApp() {
     val backStack = rememberNavBackStack(MainRoute)
     val accountLedgerSelections = remember { mutableStateMapOf<Long, Set<Long>>() }
     val accountEditorBackRequests = remember { mutableMapOf<Long, () -> Unit>() }
+    val autoNotificationManager = remember(application) {
+        AutoBookkeepingNotificationManager(application, application.repository)
+    }
     val navigateTo = remember(backStack) {
         { route: AccountingRoute ->
             if (backStack.lastOrNull() != route) {
@@ -147,6 +169,12 @@ fun AccountingApp() {
             } else {
                 request()
             }
+        }
+    }
+    LaunchedEffect(initialAutoBookkeepingEventId) {
+        initialAutoBookkeepingEventId?.takeIf { it > 0 }?.let { eventId ->
+            navigateTo(AutoBookkeepingEventRoute(eventId))
+            onInitialAutoBookkeepingEventConsumed()
         }
     }
 
@@ -186,6 +214,7 @@ fun AccountingApp() {
                             onOpenAccount = { navigateTo(AccountDetailRoute(it)) },
                             onAddAccount = { navigateTo(AccountEditorRoute()) },
                             onOpenSettings = { navigateTo(SettingsRoute) },
+                            onOpenPendingAutoBookkeeping = { navigateTo(AutoBookkeepingPendingRoute) },
                             onOpenLedgers = { navigateTo(LedgerRoute) },
                             onSelectLedger = { ledgerId -> viewModel.selectLedger(ledgerId) {} },
                         )
@@ -420,6 +449,7 @@ fun AccountingApp() {
                             uiState = uiState,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onOpenAutoBookkeeping = { navigateTo(AutoBookkeepingSettingsRoute) },
                             onOpenBackup = { navigateTo(BackupRoute) },
                             onThemeModeChange = viewModel::updateThemeMode,
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
@@ -428,6 +458,84 @@ fun AccountingApp() {
                             onColoredTransactionAmountsEnabledChange =
                                 viewModel::updateColoredTransactionAmountsEnabled,
                         )
+                    }
+                    entry<AutoBookkeepingSettingsRoute> {
+                        AutoBookkeepingSettingsScreen(
+                            uiState = uiState,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onEnabledChange = viewModel::updateAutoBookkeepingEnabled,
+                            onProviderEnabledChange = viewModel::updateAutoBookkeepingProviderEnabled,
+                            onPrivacyModeChange = viewModel::updateNotificationPrivacyMode,
+                        )
+                    }
+                    entry<AutoBookkeepingPendingRoute> {
+                        AutoBookkeepingPendingScreen(
+                            uiState = uiState,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onEdit = { navigateTo(AutoBookkeepingEventRoute(it)) },
+                            onConfirm = { eventId ->
+                                viewModel.confirmAutoBookkeepingEvent(eventId) {
+                                    autoNotificationManager.cancel(eventId)
+                                }
+                            },
+                            onIgnore = { eventId ->
+                                viewModel.ignoreAutoBookkeepingEvent(eventId) {
+                                    autoNotificationManager.cancel(eventId)
+                                }
+                            },
+                        )
+                    }
+                    entry<AutoBookkeepingEventRoute> { route ->
+                        val event = uiState.pendingAutoBookkeepingEvents.firstOrNull { it.id == route.eventId }
+                        if (event == null) {
+                            AutoBookkeepingPendingScreen(
+                                uiState = uiState,
+                                backdrop = backdrop,
+                                onBack = { backStack.removeAt(backStack.lastIndex) },
+                                onEdit = { navigateTo(AutoBookkeepingEventRoute(it)) },
+                                onConfirm = viewModel::confirmAutoBookkeepingEvent,
+                                onIgnore = viewModel::ignoreAutoBookkeepingEvent,
+                            )
+                        } else {
+                            ManualEntryScreen(
+                                uiState = uiState,
+                                backdrop = backdrop,
+                                onBack = {
+                                    if (backStack.lastOrNull() == route) {
+                                        backStack.removeAt(backStack.lastIndex)
+                                    }
+                                },
+                                initialDraft = TransactionDraft(
+                                    type = event.type,
+                                    amountMinor = event.amountMinor,
+                                    currencyKey = event.currencyKey,
+                                    accountAmountMinor = event.amountMinor,
+                                    accountId = event.accountId ?: 0L,
+                                    categoryId = event.categoryId,
+                                    merchant = event.merchant,
+                                    note = event.note,
+                                    occurredAt = event.occurredAt,
+                                    source = TransactionSource.AI,
+                                    ledgerId = event.ledgerId,
+                                ),
+                                draftKey = event.id,
+                                allowLedgerChange = false,
+                                onSave = { draft, onSaved ->
+                                    viewModel.confirmAutoBookkeepingEvent(event.id, draft) {
+                                        autoNotificationManager.cancel(event.id)
+                                        onSaved()
+                                    }
+                                },
+                                onAddLedger = { navigateTo(LedgerEditorRoute()) },
+                                onManageLedgers = { navigateTo(LedgerRoute) },
+                                onAddAccount = { ledgerId ->
+                                    navigateTo(AccountEditorRoute(ledgerIds = listOf(ledgerId)))
+                                },
+                                onAddCategory = viewModel::addCategory,
+                            )
+                        }
                     }
                     entry<BackupRoute> {
                         BackupRestoreScreen(

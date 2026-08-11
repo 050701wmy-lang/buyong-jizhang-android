@@ -10,6 +10,7 @@ import com.vos.accounting.data.AccountEntity
 import com.vos.accounting.data.AccountExchangeLink
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
+import com.vos.accounting.data.AutoBookkeepingEventEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
@@ -17,6 +18,8 @@ import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.AccountLedgerCrossRef
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.model.TransactionDraft
+import com.vos.accounting.model.NotificationPrivacyMode
+import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -54,6 +57,12 @@ data class AccountingUiState(
     val followSystemColor: Boolean = true,
     val predictiveBackAnimationEnabled: Boolean = false,
     val coloredTransactionAmountsEnabled: Boolean = false,
+    val autoBookkeepingEnabled: Boolean = false,
+    val autoBookkeepingWechatEnabled: Boolean = true,
+    val autoBookkeepingAlipayEnabled: Boolean = true,
+    val autoBookkeepingUnionPayEnabled: Boolean = true,
+    val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+    val pendingAutoBookkeepingEvents: List<AutoBookkeepingEventEntity> = emptyList(),
 )
 
 /** 汇集账户、类型、币种及账本关联的响应式状态。 */
@@ -118,7 +127,8 @@ class AccountingViewModel(
         ledgerStateWithAccountFacts,
         repository.settings,
         writeState,
-    ) { ledger, settings, write ->
+        repository.pendingAutoBookkeepingEvents,
+    ) { ledger, settings, write, pendingEvents ->
         ledger.copy(
             writeInProgress = write.inProgress,
             writeError = write.error,
@@ -128,6 +138,13 @@ class AccountingViewModel(
             followSystemColor = settings?.followSystemColor ?: true,
             predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
             coloredTransactionAmountsEnabled = settings?.coloredTransactionAmountsEnabled ?: false,
+            autoBookkeepingEnabled = settings?.autoBookkeepingEnabled ?: false,
+            autoBookkeepingWechatEnabled = settings?.autoBookkeepingWechatEnabled ?: true,
+            autoBookkeepingAlipayEnabled = settings?.autoBookkeepingAlipayEnabled ?: true,
+            autoBookkeepingUnionPayEnabled = settings?.autoBookkeepingUnionPayEnabled ?: true,
+            notificationPrivacyMode = settings?.notificationPrivacyMode
+                ?: NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+            pendingAutoBookkeepingEvents = pendingEvents,
             currentLedgerId = settings?.currentLedgerId ?: 1,
         )
     }.stateIn(
@@ -182,6 +199,49 @@ class AccountingViewModel(
         viewModelScope.launch {
             repository.updateColoredTransactionAmountsEnabled(enabled)
         }
+    }
+
+    /** 更新自动记账总开关。 */
+    fun updateAutoBookkeepingEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoBookkeepingEnabled(enabled) }
+    }
+
+    /** 更新指定支付平台的自动记账开关。 */
+    fun updateAutoBookkeepingProviderEnabled(provider: PaymentProvider, enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoBookkeepingProviderEnabled(provider, enabled) }
+    }
+
+    /** 更新自动账单通知的隐私展示方式。 */
+    fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode) {
+        viewModelScope.launch { repository.updateNotificationPrivacyMode(mode) }
+    }
+
+    /** 一键确认已经达到高置信度的待确认账单。 */
+    fun confirmAutoBookkeepingEvent(eventId: Long, onConfirmed: () -> Unit = {}) {
+        launchWrite(
+            action = { repository.confirmAutoBookkeepingEvent(eventId) },
+            onSuccess = { onConfirmed() },
+        )
+    }
+
+    /** 保存用户补全后的自动账单并学习本地映射。 */
+    fun confirmAutoBookkeepingEvent(
+        eventId: Long,
+        draft: TransactionDraft,
+        onConfirmed: () -> Unit,
+    ) {
+        launchWrite(
+            action = { repository.confirmAutoBookkeepingEvent(eventId, draft) },
+            onSuccess = { onConfirmed() },
+        )
+    }
+
+    /** 忽略待确认账单并保留短期防重记录。 */
+    fun ignoreAutoBookkeepingEvent(eventId: Long, onIgnored: () -> Unit = {}) {
+        launchWrite(
+            action = { repository.ignoreAutoBookkeepingEvent(eventId) },
+            onSuccess = { onIgnored() },
+        )
     }
 
     /**

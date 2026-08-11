@@ -3,6 +3,7 @@ package com.vos.accounting.ui
 import android.os.Build
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,7 +36,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.FabPosition
@@ -98,6 +101,27 @@ internal fun TopBarIconAction(
     }
 }
 
+/** 展示明细页待确认入口，并在右上角显示稳定尺寸数量 Badge。 */
+@Composable
+private fun PendingAutoBookkeepingAction(count: Int, onClick: () -> Unit) {
+    Box {
+        TopBarIconAction(MiuixIcons.ListView, "待确认账单", onClick)
+        if (count > 0) {
+            Text(
+                text = count.coerceAtMost(99).toString(),
+                modifier = Modifier
+                    .align(androidx.compose.ui.Alignment.TopEnd)
+                    .background(MiuixTheme.colorScheme.primary, RoundedCornerShape(3.dp))
+                    .padding(horizontal = 3.dp, vertical = 1.dp),
+                color = MiuixTheme.colorScheme.onPrimary,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
+    }
+}
+
 /**
  * 展示 MIUIX 分组小标题，供各页面分区标题共用。
  */
@@ -148,6 +172,7 @@ fun MainShell(
     onOpenAccount: (Long) -> Unit,
     onAddAccount: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPendingAutoBookkeeping: () -> Unit,
     onOpenLedgers: () -> Unit,
     onSelectLedger: (Long) -> Unit,
 ) {
@@ -182,6 +207,7 @@ fun MainShell(
                     onAddAccount = onAddAccount,
                     onOpenAccount = onOpenAccount,
                     onOpenSettings = onOpenSettings,
+                    onOpenPendingAutoBookkeeping = onOpenPendingAutoBookkeeping,
                     onOpenLedgers = onOpenLedgers,
                     onSelectLedger = onSelectLedger,
                 )
@@ -199,6 +225,7 @@ fun MainShell(
                 onAddAccount = onAddAccount,
                 onOpenAccount = onOpenAccount,
                 onOpenSettings = onOpenSettings,
+                onOpenPendingAutoBookkeeping = onOpenPendingAutoBookkeeping,
                 onOpenLedgers = onOpenLedgers,
                 onSelectLedger = onSelectLedger,
             )
@@ -222,6 +249,7 @@ private fun MainScaffold(
     onAddAccount: () -> Unit,
     onOpenAccount: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPendingAutoBookkeeping: () -> Unit,
     onOpenLedgers: () -> Unit,
     onSelectLedger: (Long) -> Unit,
 ) {
@@ -259,6 +287,13 @@ private fun MainScaffold(
                                 TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
+                            if (activeTab == MainTab.DETAILS) {
+                                PendingAutoBookkeepingAction(
+                                    uiState.pendingAutoBookkeepingEvents.size,
+                                    onOpenPendingAutoBookkeeping,
+                                )
+                                Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
+                            }
                             TopBarIconAction(MiuixIcons.GridView, "选择账本", onOpenLedgers)
                             Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             TopBarIconAction(MiuixIcons.Settings, "设置", onOpenSettings)
@@ -273,6 +308,13 @@ private fun MainScaffold(
                         actions = {
                             if (activeTab == MainTab.HOME) {
                                 TopBarIconAction(MiuixIcons.Add, "新增账户", onAddAccount)
+                                Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
+                            }
+                            if (activeTab == MainTab.DETAILS) {
+                                PendingAutoBookkeepingAction(
+                                    uiState.pendingAutoBookkeepingEvents.size,
+                                    onOpenPendingAutoBookkeeping,
+                                )
                                 Spacer(modifier = Modifier.width(TOP_BAR_ACTION_SPACING))
                             }
                             TopBarIconAction(MiuixIcons.GridView, "选择账本", onOpenLedgers)

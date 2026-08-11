@@ -130,6 +130,9 @@ fun ManualEntryScreen(
     onBack: () -> Unit,
     initialAccountId: Long = 0,
     transaction: TransactionRecord? = null,
+    initialDraft: TransactionDraft? = null,
+    draftKey: Long = 0,
+    allowLedgerChange: Boolean = true,
     onSave: (TransactionDraft, () -> Unit) -> Unit,
     onUpdate: (Long, TransactionDraft, () -> Unit) -> Unit = { _, _, _ -> },
     onDelete: (Long, () -> Unit) -> Unit = { _, _ -> },
@@ -144,35 +147,45 @@ fun ManualEntryScreen(
         () -> Unit,
     ) -> Unit,
 ) {
-    var amountExpression by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.amountMinor?.let(::manualFixedAmountText).orEmpty())
+    val editorStateKey = transaction?.id ?: draftKey
+    var amountExpression by rememberSaveable(editorStateKey) {
+        mutableStateOf(
+            (transaction?.amountMinor ?: initialDraft?.amountMinor)
+                ?.let(::manualFixedAmountText)
+                .orEmpty(),
+        )
     }
-    var accountAmountExpression by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.accountAmountMinor?.let(::manualFixedAmountText).orEmpty())
+    var accountAmountExpression by rememberSaveable(editorStateKey) {
+        mutableStateOf(
+            (transaction?.accountAmountMinor ?: initialDraft?.accountAmountMinor)
+                ?.let(::manualFixedAmountText)
+                .orEmpty(),
+        )
     }
-    var note by rememberSaveable(transaction?.id, stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(transaction?.note.orEmpty()))
+    var note by rememberSaveable(editorStateKey, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(transaction?.note ?: initialDraft?.note.orEmpty()))
     }
-    var merchant by rememberSaveable(transaction?.id, stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(transaction?.merchant.orEmpty()))
+    var merchant by rememberSaveable(editorStateKey, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(transaction?.merchant ?: initialDraft?.merchant.orEmpty()))
     }
-    var type by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.type ?: TransactionType.EXPENSE)
+    var type by rememberSaveable(editorStateKey) {
+        mutableStateOf(transaction?.type ?: initialDraft?.type ?: TransactionType.EXPENSE)
     }
-    var accountId by rememberSaveable(transaction?.id, initialAccountId) {
-        mutableStateOf(transaction?.accountId ?: initialAccountId)
+    var accountId by rememberSaveable(editorStateKey, initialAccountId) {
+        mutableStateOf(transaction?.accountId ?: initialDraft?.accountId ?: initialAccountId)
     }
-    var currencyKey by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.currencyKey.orEmpty())
+    var currencyKey by rememberSaveable(editorStateKey) {
+        mutableStateOf(transaction?.currencyKey ?: initialDraft?.currencyKey.orEmpty())
     }
-    var currencyManuallySelected by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction != null)
+    var currencyManuallySelected by rememberSaveable(editorStateKey) {
+        mutableStateOf(transaction != null || initialDraft != null)
     }
-    var editingAccountAmount by rememberSaveable(transaction?.id) { mutableStateOf(false) }
-    var conversionInitialized by rememberSaveable(transaction?.id) { mutableStateOf(false) }
-    var ledgerId by rememberSaveable(transaction?.id, initialAccountId) {
+    var editingAccountAmount by rememberSaveable(editorStateKey) { mutableStateOf(false) }
+    var conversionInitialized by rememberSaveable(editorStateKey) { mutableStateOf(false) }
+    var ledgerId by rememberSaveable(editorStateKey, initialAccountId) {
         mutableStateOf(
             transaction?.ledgerId
+                ?: initialDraft?.ledgerId
                 ?: uiState.currentLedgerId.takeIf { currentLedgerId ->
                     initialAccountId == 0L || uiState.accountLedgerCrossRefs.any {
                         it.accountId == initialAccountId && it.ledgerId == currentLedgerId
@@ -184,33 +197,38 @@ fun ManualEntryScreen(
                 ?: uiState.currentLedgerId,
         )
     }
-    var observedCurrentLedgerId by rememberSaveable(transaction?.id) {
+    var observedCurrentLedgerId by rememberSaveable(editorStateKey) {
         mutableStateOf(uiState.currentLedgerId)
     }
-    var categoryId by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.categoryId ?: 0L)
+    var categoryId by rememberSaveable(editorStateKey) {
+        mutableStateOf(transaction?.categoryId ?: initialDraft?.categoryId ?: 0L)
     }
-    var keypadVisible by rememberSaveable(transaction?.id) {
+    var keypadVisible by rememberSaveable(editorStateKey) {
         mutableStateOf(false)
     }
     var showCategoryDialog by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by rememberSaveable { mutableStateOf(false) }
     var showLedgerPicker by rememberSaveable { mutableStateOf(false) }
     var showCurrencyPicker by rememberSaveable { mutableStateOf(false) }
-    var occurredAt by rememberSaveable(transaction?.id) {
-        mutableStateOf(transaction?.occurredAt ?: System.currentTimeMillis())
+    var occurredAt by rememberSaveable(editorStateKey) {
+        mutableStateOf(transaction?.occurredAt ?: initialDraft?.occurredAt ?: System.currentTimeMillis())
     }
     val matchingCategories = uiState.categories.filter {
-        it.type == type && (!it.isArchived || it.id == transaction?.categoryId)
+        it.type == type &&
+            (!it.isArchived || it.id == transaction?.categoryId || it.id == initialDraft?.categoryId)
     }
     val selectableLedgers = uiState.ledgers.filter {
-        !it.isHidden || it.id == transaction?.ledgerId
+        !it.isHidden || it.id == transaction?.ledgerId || it.id == initialDraft?.ledgerId
     }
     val linkedAccountIds = uiState.accountLedgerCrossRefs
         .filter { it.ledgerId == ledgerId }
         .mapTo(mutableSetOf(), AccountLedgerCrossRef::accountId)
     val selectableAccounts = uiState.accounts.filter {
-        it.id in linkedAccountIds && (!it.isArchived || it.id == transaction?.accountId)
+        it.id in linkedAccountIds && (
+            !it.isArchived ||
+                it.id == transaction?.accountId ||
+                it.id == initialDraft?.accountId
+            )
     }
     val amountMinor = calculateManualAmount(amountExpression)
     val selectedAccount = uiState.accounts.firstOrNull { it.id == accountId }
@@ -227,7 +245,7 @@ fun ManualEntryScreen(
     }
     LaunchedEffect(uiState.currentLedgerId) {
         if (
-            transaction == null &&
+            transaction == null && initialDraft == null &&
             uiState.currentLedgerId != observedCurrentLedgerId &&
             selectableLedgers.any { it.id == uiState.currentLedgerId }
         ) {
@@ -243,7 +261,7 @@ fun ManualEntryScreen(
         }
     }
     LaunchedEffect(accountId, accountCurrency?.key) {
-        if (transaction == null && !currencyManuallySelected) {
+        if (transaction == null && initialDraft == null && !currencyManuallySelected) {
             currencyKey = accountCurrency?.key.orEmpty()
         }
     }
@@ -251,7 +269,7 @@ fun ManualEntryScreen(
         if (amountMinor == null || transactionCurrency == null || accountCurrency == null) {
             return@LaunchedEffect
         }
-        if (transaction != null && !conversionInitialized) {
+        if ((transaction != null || initialDraft != null) && !conversionInitialized) {
             conversionInitialized = true
         } else {
             conversionInitialized = true
@@ -277,7 +295,7 @@ fun ManualEntryScreen(
         backdrop = backdrop,
         onBack = onBack,
         collapsible = false,
-        onTitleClick = { showLedgerPicker = true },
+        onTitleClick = if (allowLedgerChange) ({ showLedgerPicker = true }) else null,
         navigationIcon = MiuixIcons.Close,
         navigationContentDescription = "关闭",
     ) { innerPadding ->
@@ -353,7 +371,7 @@ fun ManualEntryScreen(
                         merchant = merchant.text,
                         note = note.text,
                         occurredAt = occurredAt,
-                        source = transaction?.source ?: TransactionSource.MANUAL,
+                        source = transaction?.source ?: initialDraft?.source ?: TransactionSource.MANUAL,
                         ledgerId = ledgerId,
                     )
                     if (transaction == null) {

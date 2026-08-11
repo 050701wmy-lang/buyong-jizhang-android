@@ -850,12 +850,12 @@ private fun buildReportData(
     selectedType: TransactionType,
     anchor: LocalDate,
 ): ReportData {
-    val recordsByDate = records.groupBy(::recordDate)
+    val recordsByDate = records.filter { it.exchangeId == null }.groupBy(::recordDate)
     val range = rangeFor(period, anchor)
     val previousRange = rangeFor(period, shiftAnchor(anchor, period, -1))
     val currentRecords = recordsForRange(recordsByDate, range.start, range.end)
     val currentTypeRecords = currentRecords.filter { it.type == selectedType }
-    val currentTotal = currentTypeRecords.sumOf(TransactionRecord::baseAmountMinor)
+    val currentTotal = currentTypeRecords.sumOf { record -> reportAmount(record, selectedType) }
     val previousTotal = amountForRange(
         recordsByDate = recordsByDate,
         selectedType = selectedType,
@@ -883,9 +883,10 @@ private fun buildReportData(
             .map { (name, groupedRecords) ->
                 ReportCategory(
                     name = name,
-                    amountMinor = groupedRecords.sumOf(TransactionRecord::baseAmountMinor),
+                    amountMinor = groupedRecords.sumOf { record -> reportAmount(record, selectedType) },
                 )
             }
+            .filter { it.amountMinor > 0 }
             .sortedByDescending(ReportCategory::amountMinor),
     )
 }
@@ -1019,12 +1020,16 @@ private fun amountForRange(
     var date = start
     while (!date.isAfter(end)) {
         recordsByDate[date].orEmpty().forEach { record ->
-            if (record.type == selectedType) amount += record.baseAmountMinor
+            amount += reportAmount(record, selectedType)
         }
         date = date.plusDays(1)
     }
     return amount
 }
+
+/** 返回一条账目对指定报表方向的贡献。 */
+private fun reportAmount(record: TransactionRecord, selectedType: TransactionType): Long =
+    if (record.type == selectedType) record.baseAmountMinor else 0L
 
 /**
  * 将账目时间戳转换为设备时区日期。

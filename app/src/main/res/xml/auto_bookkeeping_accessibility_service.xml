@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/auto_bookkeeping_accessibility_description"
+    android:notificationTimeout="300"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone,com.unionpay"
+    android:settingsActivity="com.vos.accounting.MainActivity" />

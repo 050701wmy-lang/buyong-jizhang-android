@@ -63,7 +63,6 @@ import com.vos.accounting.data.LedgerRecord
 import com.vos.accounting.data.TransactionRecord
 import com.vos.accounting.data.convertCurrencyMinor
 import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.anim.folmeSpring
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
@@ -124,13 +123,19 @@ internal val EXPENSE_AMOUNT_COLOR = Color(0xFFE5484D)
 /** 收入金额启用颜色显示时使用的绿色。 */
 internal val INCOME_AMOUNT_COLOR = Color(0xFF2E9B55)
 
-/** 按设置返回普通收支金额颜色，转账与币种兑换保持原色。 */
-internal fun transactionAmountColor(type: TransactionType, enabled: Boolean, defaultColor: Color): Color = when {
-    !enabled -> defaultColor
-    type == TransactionType.EXPENSE -> EXPENSE_AMOUNT_COLOR
-    type == TransactionType.INCOME -> INCOME_AMOUNT_COLOR
-    else -> defaultColor
+/** 按设置返回收支金额颜色。 */
+internal fun transactionAmountColor(type: TransactionType, enabled: Boolean, defaultColor: Color): Color =
+    if (!enabled) defaultColor else if (type == TransactionType.EXPENSE) EXPENSE_AMOUNT_COLOR else INCOME_AMOUNT_COLOR
+
+/** 返回账目在明细中的金额正负号。 */
+internal fun transactionAmountSign(record: TransactionRecord): String = when {
+    record.type == TransactionType.EXPENSE -> "-"
+    else -> "+"
 }
+
+/** 返回账目的明细标题。 */
+internal fun transactionDisplayTitle(record: TransactionRecord): String =
+    if (record.exchangeId != null) "币种兑换" else record.merchant.ifBlank { record.categoryName }
 
 /** 账本叠放中第一层背景卡片的缩放比例。 */
 private const val LEDGER_STACK_NEAR_BACKGROUND_SCALE = 0.986f
@@ -974,12 +979,12 @@ fun DetailsScreen(
     val currentMonth = YearMonth.from(today)
     val exchangeSources = remember(uiState.transactions) {
         uiState.transactions
-            .filter { it.transferDirection == TransferDirection.OUT && it.exchangeId != null }
+            .filter { it.type == TransactionType.EXPENSE && it.exchangeId != null }
             .associateBy { it.exchangeId!! }
     }
     val recordsByDate = remember(uiState.transactions) {
         uiState.transactions
-            .filter { it.transferDirection != TransferDirection.OUT }
+            .filterNot { it.type == TransactionType.EXPENSE && it.exchangeId != null }
             .groupBy(::detailsRecordDate)
             .entries
             .sortedByDescending(Map.Entry<LocalDate, List<TransactionRecord>>::key)
@@ -990,16 +995,18 @@ fun DetailsScreen(
         var monthIncome = 0L
         recordsByDate.forEach { (date, records) ->
             if (date == today) {
-                records.filter { it.type == TransactionType.EXPENSE }.forEach {
-                    todayExpense += it.baseAmountMinor
+                records.filter { it.exchangeId == null }.forEach { record ->
+                    when (record.type) {
+                        TransactionType.EXPENSE -> todayExpense += record.baseAmountMinor
+                        else -> Unit
+                    }
                 }
             }
             if (YearMonth.from(date) == currentMonth) {
-                records.forEach { record ->
+                records.filter { it.exchangeId == null }.forEach { record ->
                     when (record.type) {
                         TransactionType.EXPENSE -> monthExpense += record.baseAmountMinor
                         TransactionType.INCOME -> monthIncome += record.baseAmountMinor
-                        else -> Unit
                     }
                 }
             }
@@ -1149,10 +1156,10 @@ private fun DetailsDateGroup(
     onEditTransaction: (Long) -> Unit,
 ) {
     val expense = records
-        .filter { it.type == TransactionType.EXPENSE }
+        .filter { it.type == TransactionType.EXPENSE && it.exchangeId == null }
         .sumOf(TransactionRecord::baseAmountMinor)
     val income = records
-        .filter { it.type == TransactionType.INCOME }
+        .filter { it.type == TransactionType.INCOME && it.exchangeId == null }
         .sumOf(TransactionRecord::baseAmountMinor)
     Card(
         modifier = Modifier
@@ -1205,11 +1212,11 @@ private fun DetailsTransactionRow(
     coloredTransactionAmountsEnabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val isTransfer = record.type == TransactionType.TRANSFER
+    val isExchange = record.exchangeId != null
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !isTransfer, onClick = onClick)
+            .clickable(enabled = !isExchange, onClick = onClick)
             .padding(
                 horizontal = GROUPED_CARD_HORIZONTAL_PADDING,
                 vertical = GROUPED_CARD_ROW_VERTICAL_PADDING,
@@ -1225,7 +1232,7 @@ private fun DetailsTransactionRow(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (isTransfer) {
+            if (isExchange) {
                 Icon(
                     imageVector = MiuixIcons.Basic.ArrowUpDown,
                     contentDescription = null,
@@ -1245,7 +1252,7 @@ private fun DetailsTransactionRow(
                 .padding(start = 12.dp),
         ) {
             Text(
-                text = if (isTransfer) "币种兑换" else record.merchant.ifBlank { record.categoryName },
+                text = transactionDisplayTitle(record),
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 style = MiuixTheme.textStyles.body1,
@@ -1258,7 +1265,7 @@ private fun DetailsTransactionRow(
                 style = MiuixTheme.textStyles.footnote1,
             )
         }
-        val sign = if (record.type == TransactionType.EXPENSE) "-" else "+"
+        val sign = transactionAmountSign(record)
         Column(
             modifier = Modifier.padding(start = 12.dp),
             horizontalAlignment = Alignment.End,
@@ -1342,6 +1349,7 @@ fun SettingsScreen(
     uiState: AccountingUiState,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
+    onOpenAutoBookkeeping: () -> Unit,
     onOpenBackup: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
@@ -1429,6 +1437,22 @@ fun SettingsScreen(
                         .padding(bottom = 12.dp),
                     insideMargin = PaddingValues(0.dp),
                 ) {
+                    BasicComponent(
+                        title = "AI 记账",
+                        summary = if (uiState.autoBookkeepingEnabled) "已开启" else "关闭",
+                        modifier = Modifier.fillMaxWidth(),
+                        endActions = {
+                            Icon(
+                                imageVector = MiuixIcons.Basic.ArrowRight,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .padding(start = 6.dp)
+                                    .size(width = 10.dp, height = 16.dp),
+                                tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                            )
+                        },
+                        onClick = onOpenAutoBookkeeping,
+                    )
                     BasicComponent(
                         title = "数据备份与恢复",
                         summary = "密码导出全部数据，或从备份覆盖恢复",
@@ -1542,7 +1566,7 @@ internal fun MainTabList(
  * 展示主列表中的分区标题。
  */
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(
         text = text,
         modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 5.dp, bottom = 9.dp),

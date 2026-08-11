@@ -1,5 +1,6 @@
 package com.vos.accounting.backup
 
+import com.vos.accounting.model.TransactionType
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNamingStrategy
@@ -133,10 +134,55 @@ object BackupCodec {
         }
         val jsonText = jsonBytes?.toString(Charsets.UTF_8)
             ?: throw BackupException("备份内容缺失")
-        val data = json.decodeFromString(BackupData.serializer(), jsonText)
-        if (data.formatVersion !in 1..3) throw BackupException("不支持的备份版本")
+        val decoded = json.decodeFromString(BackupData.serializer(), normalizeLegacyTypes(jsonText))
+        val data = decoded.copy(
+            transactions = decoded.transactions.map { transaction ->
+                if (
+                    transaction.transferDirection == null &&
+                    transaction.refundOfTransactionId == null &&
+                    transaction.transferId == null
+                ) {
+                    transaction
+                } else {
+                    transaction.copy(
+                        type = if (transaction.transferDirection == "IN") {
+                            TransactionType.INCOME
+                        } else {
+                            transaction.type
+                        },
+                        transferDirection = null,
+                        refundOfTransactionId = null,
+                        transferId = null,
+                    )
+                }
+            },
+            autoBookkeepingEvents = decoded.autoBookkeepingEvents.map { event ->
+                if (
+                    event.destinationAmountMinor == null &&
+                    event.destinationAccountId == null &&
+                    event.refundOfTransactionId == null
+                ) {
+                    event
+                } else {
+                    event.copy(
+                        destinationAmountMinor = null,
+                        destinationAccountId = null,
+                        categoryId = null,
+                        refundOfTransactionId = null,
+                        destinationPaymentMethodKey = "",
+                        canConfirm = false,
+                    )
+                }
+            },
+        )
+        if (data.formatVersion !in 1..4) throw BackupException("不支持的备份版本")
         return ZipContent(data, media)
     }
+
+    /** 将旧备份中的退款和转账枚举名称转换为普通收支。 */
+    private fun normalizeLegacyTypes(jsonText: String): String = jsonText
+        .replace(Regex("\"type\"\\s*:\\s*\"REFUND\""), "\"type\":\"INCOME\"")
+        .replace(Regex("\"type\"\\s*:\\s*\"TRANSFER\""), "\"type\":\"EXPENSE\"")
 
     private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
         val spec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, KEY_BITS)

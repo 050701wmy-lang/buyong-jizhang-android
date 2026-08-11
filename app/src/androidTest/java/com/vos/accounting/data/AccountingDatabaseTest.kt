@@ -6,11 +6,13 @@ import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.vos.accounting.model.AccountType
+import com.vos.accounting.model.AutoBookkeepingCapture
+import com.vos.accounting.model.AutoCaptureSource
 import com.vos.accounting.model.MAX_AMOUNT_MINOR
+import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionDraft
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
-import com.vos.accounting.model.TransferDirection
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -475,7 +477,7 @@ class AccountingDatabaseTest {
     }
 
     /**
-     * 验证非空账户换币走审计式兑换：创建继任账户、成对转账流水并归档原账户。
+     * 验证非空账户换币走审计式兑换：创建继任账户、成对收支流水并归档原账户。
      */
     @Test
     fun changeCurrencyOnNonEmptyAccountCreatesExchange() = runBlocking {
@@ -516,11 +518,11 @@ class AccountingDatabaseTest {
         val newLegs = dao.transactionsByAccount(newId)
         assertEquals(1, oldLegs.size)
         assertEquals(1, newLegs.size)
-        assertEquals(TransactionType.TRANSFER, oldLegs.single().type)
-        assertEquals(TransferDirection.OUT, oldLegs.single().transferDirection)
+        assertEquals(TransactionType.EXPENSE, oldLegs.single().type)
+        assertEquals(null, oldLegs.single().transferDirection)
         assertEquals(10000, oldLegs.single().amountMinor)
-        assertEquals(TransactionType.TRANSFER, newLegs.single().type)
-        assertEquals(TransferDirection.IN, newLegs.single().transferDirection)
+        assertEquals(TransactionType.INCOME, newLegs.single().type)
+        assertEquals(null, newLegs.single().transferDirection)
         assertEquals(oldLegs.single().exchangeId, newLegs.single().exchangeId)
 
         val cnyRate = dao.findCurrency("cny")!!.rateToCnyScaled
@@ -832,4 +834,77 @@ class AccountingDatabaseTest {
         assertEquals("商店", record.merchant)
         assertEquals("午餐", record.note)
     }
+
+    /** 验证页面与通知识别同一交易时只保留一个草稿，重复确认也只写一笔账。 */
+    @Test
+    fun autoBookkeepingCaptureAndConfirmationAreIdempotent() = runBlocking {
+        repository.initialize()
+        repository.updateAutoBookkeepingEnabled(true)
+        val first = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.ACCESSIBILITY,
+                type = TransactionType.EXPENSE,
+                amountMinor = 2800,
+                merchant = "咖啡店",
+                occurredAt = 10_000,
+                paymentMethodKey = "零钱",
+                externalKeyHash = "hash_1",
+            ),
+        )
+        val second = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.NOTIFICATION,
+                type = TransactionType.EXPENSE,
+                amountMinor = 2800,
+                merchant = "咖啡店",
+                occurredAt = 10_500,
+                paymentMethodKey = "零钱",
+                externalKeyHash = "hash_1",
+            ),
+        )
+
+        assertEquals(first?.id, second?.id)
+        assertEquals(1, dao.getAllAutoBookkeepingEvents().size)
+        assertTrue(second?.captureSources.orEmpty().contains("ACCESSIBILITY"))
+        assertTrue(second?.captureSources.orEmpty().contains("NOTIFICATION"))
+        assertEquals(0, dao.getAllTransactions().size)
+
+        val account = dao.observeAccounts().first().single()
+        val category = dao.observeCategories().first().first { it.type == TransactionType.EXPENSE }
+        val eventId = requireNotNull(second).id
+        val draft = TransactionDraft(
+            type = TransactionType.EXPENSE,
+            amountMinor = 2800,
+            accountId = account.id,
+            categoryId = category.id,
+            merchant = "咖啡店",
+            note = "",
+            occurredAt = 10_000,
+            source = TransactionSource.AI,
+        )
+        val firstTransactionId = repository.confirmAutoBookkeepingEvent(eventId, draft)
+        val repeatedTransactionId = repository.confirmAutoBookkeepingEvent(eventId, draft)
+
+        assertEquals(firstTransactionId, repeatedTransactionId)
+        assertEquals(1, dao.getAllTransactions().size)
+
+        val learnedEvent = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.NOTIFICATION,
+                type = TransactionType.EXPENSE,
+                amountMinor = 3200,
+                merchant = "咖啡店",
+                occurredAt = 20_000,
+                paymentMethodKey = "零钱",
+                externalKeyHash = "hash_2",
+            ),
+        )
+        assertEquals(true, learnedEvent?.canConfirm)
+        repository.confirmAutoBookkeepingEvent(requireNotNull(learnedEvent).id)
+        assertEquals(2, dao.getAllTransactions().size)
+    }
+
 }
