@@ -175,7 +175,7 @@ object BackupCodec {
                 }
             },
         )
-        if (data.formatVersion !in 1..4) throw BackupException("不支持的备份版本")
+        if (data.formatVersion !in 1..5) throw BackupException("不支持的备份版本")
         return ZipContent(data, media)
     }
 

@@ -1,5 +1,6 @@
 package com.vos.accounting.ui
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -11,6 +12,11 @@ import com.vos.accounting.data.AccountExchangeLink
 import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.AutoBookkeepingEventEntity
+import com.vos.accounting.data.AutoHookHeartbeatEntity
+import com.vos.accounting.auto.AutoAiCredentialStore
+import com.vos.accounting.auto.AutoBookkeepingRuleEngine
+import com.vos.accounting.auto.PrivateAutoBookkeepingAiClient
+import com.vos.accounting.auto.testRootScreenshotAccess
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
@@ -62,6 +68,16 @@ data class AccountingUiState(
     val autoBookkeepingAlipayEnabled: Boolean = true,
     val autoBookkeepingUnionPayEnabled: Boolean = true,
     val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+    val autoLocalOcrEnabled: Boolean = false,
+    val autoRootOcrEnabled: Boolean = false,
+    val autoXposedEnabled: Boolean = false,
+    val autoCloudAiEnabled: Boolean = false,
+    val autoAiBaseUrl: String = "",
+    val autoAiModel: String = "",
+    val autoAiVisionEnabled: Boolean = false,
+    val autoAiAllowInsecureLanHttp: Boolean = false,
+    val autoAiAllowOneTapConfirm: Boolean = false,
+    val autoHookHeartbeats: List<AutoHookHeartbeatEntity> = emptyList(),
     val pendingAutoBookkeepingEvents: List<AutoBookkeepingEventEntity> = emptyList(),
 )
 
@@ -128,7 +144,8 @@ class AccountingViewModel(
         repository.settings,
         writeState,
         repository.pendingAutoBookkeepingEvents,
-    ) { ledger, settings, write, pendingEvents ->
+        repository.autoHookHeartbeats,
+    ) { ledger, settings, write, pendingEvents, hookHeartbeats ->
         ledger.copy(
             writeInProgress = write.inProgress,
             writeError = write.error,
@@ -144,6 +161,16 @@ class AccountingViewModel(
             autoBookkeepingUnionPayEnabled = settings?.autoBookkeepingUnionPayEnabled ?: true,
             notificationPrivacyMode = settings?.notificationPrivacyMode
                 ?: NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+            autoLocalOcrEnabled = settings?.autoLocalOcrEnabled ?: false,
+            autoRootOcrEnabled = settings?.autoRootOcrEnabled ?: false,
+            autoXposedEnabled = settings?.autoXposedEnabled ?: false,
+            autoCloudAiEnabled = settings?.autoCloudAiEnabled ?: false,
+            autoAiBaseUrl = settings?.autoAiBaseUrl.orEmpty(),
+            autoAiModel = settings?.autoAiModel.orEmpty(),
+            autoAiVisionEnabled = settings?.autoAiVisionEnabled ?: false,
+            autoAiAllowInsecureLanHttp = settings?.autoAiAllowInsecureLanHttp ?: false,
+            autoAiAllowOneTapConfirm = settings?.autoAiAllowOneTapConfirm ?: false,
+            autoHookHeartbeats = hookHeartbeats,
             pendingAutoBookkeepingEvents = pendingEvents,
             currentLedgerId = settings?.currentLedgerId ?: 1,
         )
@@ -214,6 +241,93 @@ class AccountingViewModel(
     /** 更新自动账单通知的隐私展示方式。 */
     fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode) {
         viewModelScope.launch { repository.updateNotificationPrivacyMode(mode) }
+    }
+
+    /** 更新本地 OCR 开关。 */
+    fun updateAutoLocalOcrEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoLocalOcrEnabled(enabled) }
+    }
+
+    /** 更新 Root OCR 开关。 */
+    fun updateAutoRootOcrEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoRootOcrEnabled(enabled) }
+    }
+
+    /** 更新 LSPosed 采集开关。 */
+    fun updateAutoXposedEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoXposedEnabled(enabled) }
+    }
+
+    /** 更新私有云 AI 开关。 */
+    fun updateAutoCloudAiEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoCloudAiEnabled(enabled) }
+    }
+
+    /** 更新视觉识别风险开关。 */
+    fun updateAutoAiVisionEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoAiVisionEnabled(enabled) }
+    }
+
+    /** 更新私网 HTTP 风险开关。 */
+    fun updateAutoAiAllowInsecureLanHttp(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoAiAllowInsecureLanHttp(enabled) }
+    }
+
+    /** 更新 AI 一键确认风险开关。 */
+    fun updateAutoAiAllowOneTapConfirm(enabled: Boolean) {
+        viewModelScope.launch { repository.updateAutoAiAllowOneTapConfirm(enabled) }
+    }
+
+    /** 保存私有 AI 端点、模型和可选 API Key。 */
+    fun saveAutoAiConfiguration(
+        baseUrl: String,
+        model: String,
+        apiKey: String?,
+        onSaved: () -> Unit = {},
+    ) {
+        launchWrite(
+            action = {
+                repository.updateAutoAiEndpoint(baseUrl, model)
+                if (apiKey != null) AutoAiCredentialStore(repository).save(apiKey)
+            },
+            onSuccess = { onSaved() },
+        )
+    }
+
+    /** 测试当前私有 AI 连接与兼容响应格式。 */
+    fun testAutoAiConnection(onResult: (Boolean) -> Unit) {
+        launchWrite(
+            action = {
+                PrivateAutoBookkeepingAiClient(repository, AutoAiCredentialStore(repository)).testConnection()
+            },
+            onSuccess = onResult,
+        )
+    }
+
+    /** 校验并原子导入不超过 1MiB 的声明式规则包。 */
+    fun importAutoRulePack(context: Context, bytes: ByteArray, onImported: () -> Unit = {}) {
+        launchWrite(
+            action = {
+                AutoBookkeepingRuleEngine(context.applicationContext, repository).importRulePack(bytes)
+            },
+            onSuccess = { onImported() },
+        )
+    }
+
+    /** 删除全部用户导入规则并恢复内置规则。 */
+    fun restoreBuiltinAutoRules(onRestored: () -> Unit = {}) {
+        launchWrite(
+            action = repository::restoreBuiltinAutoRules,
+            onSuccess = { onRestored() },
+        )
+    }
+
+    /** 测试 Root 是否允许固定截图命令。 */
+    fun testRootOcrAccess(onResult: (Boolean) -> Unit) {
+        launchWrite(
+            action = ::testRootScreenshotAccess,
+            onSuccess = onResult,
+        )
     }
 
     /** 一键确认已经达到高置信度的待确认账单。 */

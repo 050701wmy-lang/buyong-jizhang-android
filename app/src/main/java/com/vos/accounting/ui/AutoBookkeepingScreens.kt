@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -50,6 +51,7 @@ import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.basic.ArrowRight
@@ -57,6 +59,9 @@ import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
+import top.yukonga.miuix.kmp.window.WindowDialog
+import com.vos.accounting.auto.MAX_RULE_PACK_BYTES
+import com.vos.accounting.auto.HOOK_STATUS_ACTIVE
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZoneId
@@ -69,9 +74,7 @@ fun AutoBookkeepingSettingsScreen(
     uiState: AccountingUiState,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
-    onEnabledChange: (Boolean) -> Unit,
-    onProviderEnabledChange: (PaymentProvider, Boolean) -> Unit,
-    onPrivacyModeChange: (NotificationPrivacyMode) -> Unit,
+    viewModel: AccountingViewModel,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -89,6 +92,26 @@ fun AutoBookkeepingSettingsScreen(
     val notificationGranted = remember(permissionRefresh) { notificationPermissionGranted(context) }
     val listenerGranted = remember(permissionRefresh) { notificationListenerGranted(context) }
     val accessibilityGranted = remember(permissionRefresh) { accessibilityServiceGranted(context) }
+    var rootTestResult by rememberSaveable { mutableStateOf<String?>(null) }
+    var aiTestResult by rememberSaveable { mutableStateOf<String?>(null) }
+    var ruleResult by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAiConfiguration by rememberSaveable { mutableStateOf(false) }
+    var showOcrRisk by rememberSaveable { mutableStateOf(false) }
+    var showVisionRisk by rememberSaveable { mutableStateOf(false) }
+    val ruleImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val bytes = uri?.let { selected ->
+            runCatching {
+                context.contentResolver.openInputStream(selected)?.use { input ->
+                    input.readNBytes(MAX_RULE_PACK_BYTES + 1)
+                }
+            }.getOrNull()
+        }
+        if (bytes == null) {
+            ruleResult = "未读取规则文件"
+        } else {
+            viewModel.importAutoRulePack(context, bytes) { ruleResult = "规则已导入并激活" }
+        }
+    }
 
     SecondaryScaffold(title = "AI 记账", backdrop = backdrop, onBack = onBack) { innerPadding ->
         SecondaryList(innerPadding) {
@@ -100,26 +123,26 @@ fun AutoBookkeepingSettingsScreen(
                 ) {
                     SwitchPreference(
                         checked = uiState.autoBookkeepingEnabled,
-                        onCheckedChange = onEnabledChange,
+                        onCheckedChange = viewModel::updateAutoBookkeepingEnabled,
                         title = "AI 记账",
                         summary = "支付后生成待确认草稿，不会直接写入正式账目",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     SwitchPreference(
                         checked = uiState.autoBookkeepingWechatEnabled,
-                        onCheckedChange = { onProviderEnabledChange(PaymentProvider.WECHAT, it) },
+                        onCheckedChange = { viewModel.updateAutoBookkeepingProviderEnabled(PaymentProvider.WECHAT, it) },
                         title = "微信",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     SwitchPreference(
                         checked = uiState.autoBookkeepingAlipayEnabled,
-                        onCheckedChange = { onProviderEnabledChange(PaymentProvider.ALIPAY, it) },
+                        onCheckedChange = { viewModel.updateAutoBookkeepingProviderEnabled(PaymentProvider.ALIPAY, it) },
                         title = "支付宝",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     SwitchPreference(
                         checked = uiState.autoBookkeepingUnionPayEnabled,
-                        onCheckedChange = { onProviderEnabledChange(PaymentProvider.UNIONPAY, it) },
+                        onCheckedChange = { viewModel.updateAutoBookkeepingProviderEnabled(PaymentProvider.UNIONPAY, it) },
                         title = "云闪付",
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -158,15 +181,292 @@ fun AutoBookkeepingSettingsScreen(
                     style = MiuixTheme.textStyles.body2,
                 )
             }
+            item { SectionTitle("识别模式") }
+            item {
+                Card(
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    SwitchPreference(
+                        checked = uiState.autoLocalOcrEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showOcrRisk = true
+                            } else {
+                                viewModel.updateAutoRootOcrEnabled(false)
+                                viewModel.updateAutoLocalOcrEnabled(false)
+                            }
+                        },
+                        title = "本地 OCR",
+                        summary = "规则缺少关键字段时，在内存中识别支付页截图",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.autoRootOcrEnabled,
+                        onCheckedChange = viewModel::updateAutoRootOcrEnabled,
+                        title = "Root 截图兜底",
+                        summary = "仅执行固定 su -c screencap -p，不读取支付应用数据",
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = uiState.autoLocalOcrEnabled,
+                    )
+                    BasicComponent(
+                        title = "测试 Root 截图",
+                        summary = rootTestResult ?: "执行一次不落盘的内存截图测试",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            rootTestResult = "测试中…"
+                            viewModel.testRootOcrAccess { passed ->
+                                rootTestResult = if (passed) "授权与截图可用" else "不可用或未授权"
+                            }
+                        },
+                    )
+                    SwitchPreference(
+                        checked = uiState.autoXposedEnabled,
+                        onCheckedChange = viewModel::updateAutoXposedEnabled,
+                        title = "LSPosed Hook",
+                        summary = hookHeartbeatSummary(uiState),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            item { SectionTitle("声明式规则") }
+            item {
+                Card(
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    BasicComponent(
+                        title = "导入 RulePackV1",
+                        summary = ruleResult ?: "仅接受不超过 1MiB、通过 schema 与线性正则校验的 JSON",
+                        modifier = Modifier.fillMaxWidth(),
+                        endActions = { PreferenceArrow() },
+                        onClick = { ruleImportLauncher.launch(arrayOf("application/json", "text/json")) },
+                    )
+                    BasicComponent(
+                        title = "恢复内置规则",
+                        summary = "删除全部用户导入规则",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { viewModel.restoreBuiltinAutoRules { ruleResult = "已恢复内置规则" } },
+                    )
+                }
+            }
+            item { SectionTitle("私有云 AI") }
+            item {
+                Card(
+                    modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp),
+                    insideMargin = PaddingValues(0.dp),
+                ) {
+                    SwitchPreference(
+                        checked = uiState.autoCloudAiEnabled,
+                        onCheckedChange = viewModel::updateAutoCloudAiEnabled,
+                        title = "OpenAI 兼容服务",
+                        summary = "仅在确定性规则或 OCR 缺字段时请求",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    BasicComponent(
+                        title = "端点与模型",
+                        summary = if (uiState.autoAiBaseUrl.isBlank()) {
+                            "尚未配置"
+                        } else {
+                            "${uiState.autoAiBaseUrl} · ${uiState.autoAiModel.ifBlank { "未选择模型" }}"
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        endActions = { PreferenceArrow() },
+                        onClick = { showAiConfiguration = true },
+                    )
+                    BasicComponent(
+                        title = "测试 AI 连接",
+                        summary = aiTestResult ?: "验证端点、鉴权与严格 JSON 响应",
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            aiTestResult = "测试中…"
+                            viewModel.testAutoAiConnection { passed ->
+                                aiTestResult = if (passed) "连接成功" else "连接或响应格式不可用"
+                            }
+                        },
+                    )
+                    SwitchPreference(
+                        checked = uiState.autoAiVisionEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) showVisionRisk = true else viewModel.updateAutoAiVisionEnabled(false)
+                        },
+                        title = "视觉识别",
+                        summary = "允许上传裁剪压缩后的支付页截图；默认关闭",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.autoAiAllowInsecureLanHttp,
+                        onCheckedChange = viewModel::updateAutoAiAllowInsecureLanHttp,
+                        title = "允许局域网 HTTP",
+                        summary = "仅回环或私有地址；不会绕过证书错误",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.autoAiAllowOneTapConfirm,
+                        onCheckedChange = viewModel::updateAutoAiAllowOneTapConfirm,
+                        title = "允许 AI 草稿一键确认",
+                        summary = "仍要求无冲突且账户、分类均来自已确认映射",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             item { SectionTitle("通知隐私") }
             item {
                 PrivacyModePreference(
                     selected = uiState.notificationPrivacyMode,
-                    onSelect = onPrivacyModeChange,
+                    onSelect = viewModel::updateNotificationPrivacyMode,
                 )
             }
         }
     }
+    AutoAiConfigurationDialog(
+        show = showAiConfiguration,
+        baseUrl = uiState.autoAiBaseUrl,
+        model = uiState.autoAiModel,
+        onDismiss = { showAiConfiguration = false },
+        onSave = { baseUrl, model, apiKey ->
+            viewModel.saveAutoAiConfiguration(baseUrl, model, apiKey) {
+                showAiConfiguration = false
+            }
+        },
+    )
+    RiskConfirmationDialog(
+        show = showOcrRisk,
+        title = "开启本地截图识别",
+        message = "支付页截图会在内存中裁剪并交给本地 PP-OCRv5；截图和 OCR 原文不会写入文件、日志、数据库或备份。",
+        onDismiss = { showOcrRisk = false },
+        onConfirm = {
+            showOcrRisk = false
+            viewModel.updateAutoLocalOcrEnabled(true)
+        },
+    )
+    RiskConfirmationDialog(
+        show = showVisionRisk,
+        title = "允许视觉上传",
+        message = "支付页截图会被裁剪、压缩后发送到你配置的私有 AI 服务。截图可能包含商户、金额和账户信息，请确认服务端可信。",
+        onDismiss = { showVisionRisk = false },
+        onConfirm = {
+            showVisionRisk = false
+            viewModel.updateAutoAiVisionEnabled(true)
+        },
+    )
+}
+
+/** 显示私有 AI 的端点、模型与 Keystore 密钥编辑对话框。 */
+@Composable
+private fun AutoAiConfigurationDialog(
+    show: Boolean,
+    baseUrl: String,
+    model: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String?) -> Unit,
+) {
+    var editedBaseUrl by remember(show, baseUrl) { mutableStateOf(baseUrl) }
+    var editedModel by remember(show, model) { mutableStateOf(model) }
+    var editedApiKey by remember(show) { mutableStateOf("") }
+    WindowDialog(
+        show = show,
+        title = "私有 AI 配置",
+        onDismissRequest = onDismiss,
+    ) {
+        TextField(
+            value = editedBaseUrl,
+            onValueChange = { editedBaseUrl = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = "Base URL",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+        )
+        TextField(
+            value = editedModel,
+            onValueChange = { editedModel = it },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            label = "模型",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+        )
+        TextField(
+            value = editedApiKey,
+            onValueChange = { editedApiKey = it },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            label = "API Key（留空不修改）",
+            useLabelAsPlaceholder = true,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+        )
+        Row(
+            modifier = Modifier.padding(top = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = { onSave(editedBaseUrl, editedModel, "") },
+                modifier = Modifier.weight(1f),
+            ) { Text("清除密钥") }
+            Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(
+                onClick = {
+                    onSave(editedBaseUrl, editedModel, editedApiKey.takeIf(String::isNotBlank))
+                },
+                modifier = Modifier.weight(1f),
+                enabled = editedBaseUrl.isNotBlank() && editedModel.isNotBlank(),
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) { Text("保存") }
+        }
+    }
+}
+
+/** 在首次开启截图或视觉上传前展示明确风险确认。 */
+@Composable
+private fun RiskConfirmationDialog(
+    show: Boolean,
+    title: String,
+    message: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    WindowDialog(show = show, title = title, onDismissRequest = onDismiss) {
+        Text(
+            text = message,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            style = MiuixTheme.textStyles.body2,
+        )
+        Row(
+            modifier = Modifier.padding(top = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("取消") }
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColorsPrimary(),
+            ) { Text("确认开启") }
+        }
+    }
+}
+
+/** 显示两个 Hook 平台是否已在目标进程启动后送达心跳。 */
+private fun hookHeartbeatSummary(uiState: AccountingUiState): String = listOf(
+    PaymentProvider.WECHAT to "微信",
+    PaymentProvider.ALIPAY to "支付宝",
+).joinToString("；") { (provider, label) ->
+    val heartbeat = uiState.autoHookHeartbeats.firstOrNull { it.provider == provider }
+    when {
+        heartbeat == null -> "$label 未收到心跳，请重启目标应用"
+        heartbeat.status != HOOK_STATUS_ACTIVE -> "$label 旧心跳，请重启目标应用"
+        heartbeat.lastCaptureAt != null -> "$label 已激活，最近 ${formatAutoEventTime(heartbeat.lastCaptureAt)}"
+        else -> "$label ${heartbeat.appVersion} 已激活"
+    }
+}
+
+/** 显示统一尺寸与颜色的 Preference 行尾箭头。 */
+@Composable
+private fun PreferenceArrow() {
+    Icon(
+        imageVector = MiuixIcons.Basic.ArrowRight,
+        contentDescription = null,
+        modifier = Modifier.size(width = 10.dp, height = 16.dp),
+        tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+    )
 }
 
 /** 展示单项系统权限状态和设置入口。 */

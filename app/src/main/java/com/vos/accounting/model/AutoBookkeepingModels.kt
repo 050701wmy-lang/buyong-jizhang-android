@@ -15,6 +15,10 @@ enum class PaymentProvider {
 enum class AutoCaptureSource {
     ACCESSIBILITY,
     NOTIFICATION,
+    LOCAL_OCR,
+    ROOT_OCR,
+    XPOSED,
+    CLOUD_AI,
 }
 
 /** 表示自动账单从待确认到处理完成的状态。 */
@@ -45,4 +49,9 @@ data class AutoBookkeepingCapture(
     val occurredAt: Long,
     val paymentMethodKey: String = "",
     val externalKeyHash: String? = null,
+    val ruleId: String? = null,
+    val rulePackVersion: Int? = null,
+    val fieldProvenance: Map<String, AutoCaptureSource> = emptyMap(),
+    val hasConflict: Boolean = false,
+    val aiAssisted: Boolean = false,
 )

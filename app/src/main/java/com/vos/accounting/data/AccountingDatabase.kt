@@ -285,6 +285,24 @@ data class AppSettingsEntity(
     val autoBookkeepingUnionPayEnabled: Boolean = true,
     @ColumnInfo(name = "notification_privacy_mode", defaultValue = "'HIDE_ON_LOCK_SCREEN'")
     val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+    @ColumnInfo(name = "auto_local_ocr_enabled", defaultValue = "0")
+    val autoLocalOcrEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_root_ocr_enabled", defaultValue = "0")
+    val autoRootOcrEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_xposed_enabled", defaultValue = "0")
+    val autoXposedEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_cloud_ai_enabled", defaultValue = "0")
+    val autoCloudAiEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_ai_base_url", defaultValue = "''")
+    val autoAiBaseUrl: String = "",
+    @ColumnInfo(name = "auto_ai_model", defaultValue = "''")
+    val autoAiModel: String = "",
+    @ColumnInfo(name = "auto_ai_vision_enabled", defaultValue = "0")
+    val autoAiVisionEnabled: Boolean = false,
+    @ColumnInfo(name = "auto_ai_allow_insecure_lan_http", defaultValue = "0")
+    val autoAiAllowInsecureLanHttp: Boolean = false,
+    @ColumnInfo(name = "auto_ai_allow_one_tap_confirm", defaultValue = "0")
+    val autoAiAllowOneTapConfirm: Boolean = false,
 )
 
 /**
@@ -422,6 +440,16 @@ data class AutoBookkeepingEventEntity(
     val createdAt: Long,
     @ColumnInfo(name = "updated_at")
     val updatedAt: Long,
+    @ColumnInfo(name = "field_provenance_json", defaultValue = "'{}'")
+    val fieldProvenanceJson: String = "{}",
+    @ColumnInfo(name = "rule_id")
+    val ruleId: String? = null,
+    @ColumnInfo(name = "rule_pack_version")
+    val rulePackVersion: Int? = null,
+    @ColumnInfo(name = "has_conflict", defaultValue = "0")
+    val hasConflict: Boolean = false,
+    @ColumnInfo(name = "ai_assisted", defaultValue = "0")
+    val aiAssisted: Boolean = false,
 )
 
 /** 记录用户确认后的商户与分类精确映射。 */
@@ -453,6 +481,57 @@ data class AutoAccountMappingEntity(
     val paymentMethodKey: String,
     @ColumnInfo(name = "account_id")
     val accountId: Long,
+)
+
+/** 保存用户手动导入并通过校验的声明式识别规则包。 */
+@Entity(
+    tableName = "auto_rule_packs",
+    indices = [Index(value = ["pack_id", "pack_version"], unique = true)],
+)
+@Serializable
+data class AutoRulePackEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    @ColumnInfo(name = "pack_id")
+    val packId: String,
+    @ColumnInfo(name = "pack_version")
+    val packVersion: Int,
+    @ColumnInfo(name = "json_content")
+    val jsonContent: String,
+    @ColumnInfo(name = "is_active")
+    val isActive: Boolean = true,
+    @ColumnInfo(name = "imported_at")
+    val importedAt: Long,
+)
+
+/** 记录 LSPosed 适配器最近一次装载与成功采集状态。 */
+@Entity(tableName = "auto_hook_heartbeats")
+@Serializable
+data class AutoHookHeartbeatEntity(
+    @PrimaryKey
+    val provider: PaymentProvider,
+    @ColumnInfo(name = "package_name")
+    val packageName: String,
+    @ColumnInfo(name = "app_version")
+    val appVersion: String,
+    val status: String,
+    @ColumnInfo(name = "last_loaded_at")
+    val lastLoadedAt: Long,
+    @ColumnInfo(name = "last_capture_at")
+    val lastCaptureAt: Long? = null,
+)
+
+/** 保存由 Android Keystore 加密后的私有 AI 凭据，不进入备份。 */
+@Entity(tableName = "auto_ai_credentials")
+data class AutoAiCredentialEntity(
+    @PrimaryKey
+    val id: Int = 1,
+    @ColumnInfo(name = "cipher_text")
+    val cipherText: ByteArray,
+    @ColumnInfo(name = "initialization_vector")
+    val initializationVector: ByteArray,
+    @ColumnInfo(name = "updated_at")
+    val updatedAt: Long,
 )
 
 /**
@@ -681,6 +760,10 @@ interface AccountingDao {
     @Query("SELECT * FROM auto_bookkeeping_events WHERE status = 'PENDING' ORDER BY occurred_at DESC, id DESC")
     fun observePendingAutoBookkeepingEvents(): Flow<List<AutoBookkeepingEventEntity>>
 
+    /** 持续观察微信和支付宝的 Hook 心跳状态。 */
+    @Query("SELECT * FROM auto_hook_heartbeats ORDER BY provider")
+    fun observeAutoHookHeartbeats(): Flow<List<AutoHookHeartbeatEntity>>
+
     /**
      * 写入应用外观设置。
      */
@@ -728,6 +811,38 @@ interface AccountingDao {
     /** 更新账单通知的隐私展示策略。 */
     @Query("UPDATE app_settings SET notification_privacy_mode = :mode WHERE id = 1")
     suspend fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode)
+
+    /** 更新本地 OCR 开关。 */
+    @Query("UPDATE app_settings SET auto_local_ocr_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoLocalOcrEnabled(enabled: Boolean)
+
+    /** 更新 Root 截图 OCR 开关。 */
+    @Query("UPDATE app_settings SET auto_root_ocr_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoRootOcrEnabled(enabled: Boolean)
+
+    /** 更新 LSPosed 采集开关。 */
+    @Query("UPDATE app_settings SET auto_xposed_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoXposedEnabled(enabled: Boolean)
+
+    /** 更新私有云 AI 开关。 */
+    @Query("UPDATE app_settings SET auto_cloud_ai_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoCloudAiEnabled(enabled: Boolean)
+
+    /** 更新私有云 AI 的非敏感连接配置。 */
+    @Query("UPDATE app_settings SET auto_ai_base_url = :baseUrl, auto_ai_model = :model WHERE id = 1")
+    suspend fun updateAutoAiEndpoint(baseUrl: String, model: String)
+
+    /** 更新私有云 AI 的视觉上传开关。 */
+    @Query("UPDATE app_settings SET auto_ai_vision_enabled = :enabled WHERE id = 1")
+    suspend fun updateAutoAiVisionEnabled(enabled: Boolean)
+
+    /** 更新私网 HTTP 风险开关。 */
+    @Query("UPDATE app_settings SET auto_ai_allow_insecure_lan_http = :enabled WHERE id = 1")
+    suspend fun updateAutoAiAllowInsecureLanHttp(enabled: Boolean)
+
+    /** 更新 AI 结果一键确认风险开关。 */
+    @Query("UPDATE app_settings SET auto_ai_allow_one_tap_confirm = :enabled WHERE id = 1")
+    suspend fun updateAutoAiAllowOneTapConfirm(enabled: Boolean)
 
     /** 返回应用设置中记录的当前账本标识。 */
     @Query("SELECT current_ledger_id FROM app_settings WHERE id = 1")
@@ -801,6 +916,53 @@ interface AccountingDao {
     @Query("SELECT * FROM auto_account_mappings ORDER BY provider, payment_method_key")
     suspend fun getAllAutoAccountMappings(): List<AutoAccountMappingEntity>
 
+    /** 返回全部用户导入规则包供备份使用。 */
+    @Query("SELECT * FROM auto_rule_packs ORDER BY imported_at, id")
+    suspend fun getAllAutoRulePacks(): List<AutoRulePackEntity>
+
+    /** 返回当前激活的用户导入规则包。 */
+    @Query("SELECT * FROM auto_rule_packs WHERE is_active = 1 ORDER BY imported_at DESC, id DESC")
+    suspend fun getActiveAutoRulePacks(): List<AutoRulePackEntity>
+
+    /** 原子替换同标识规则包并保持其他已激活规则不变。 */
+    @Transaction
+    suspend fun activateAutoRulePack(rulePack: AutoRulePackEntity) {
+        deactivateAutoRulePack(rulePack.packId)
+        insertAutoRulePack(rulePack)
+    }
+
+    /** 停用同标识的旧规则包。 */
+    @Query("UPDATE auto_rule_packs SET is_active = 0 WHERE pack_id = :packId")
+    suspend fun deactivateAutoRulePack(packId: String)
+
+    /** 插入已经完整校验的规则包。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAutoRulePack(rulePack: AutoRulePackEntity): Long
+
+    /** 删除全部用户导入规则并恢复仅使用内置规则。 */
+    @Query("DELETE FROM auto_rule_packs")
+    suspend fun deleteAllAutoRulePacks()
+
+    /** 写入或替换 Hook 心跳。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAutoHookHeartbeat(heartbeat: AutoHookHeartbeatEntity)
+
+    /** 返回指定平台的 Hook 心跳。 */
+    @Query("SELECT * FROM auto_hook_heartbeats WHERE provider = :provider")
+    suspend fun findAutoHookHeartbeat(provider: PaymentProvider): AutoHookHeartbeatEntity?
+
+    /** 写入或替换加密后的 AI 凭据。 */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAutoAiCredential(credential: AutoAiCredentialEntity)
+
+    /** 返回加密后的 AI 凭据。 */
+    @Query("SELECT * FROM auto_ai_credentials WHERE id = 1")
+    suspend fun findAutoAiCredential(): AutoAiCredentialEntity?
+
+    /** 删除私有 AI 凭据。 */
+    @Query("DELETE FROM auto_ai_credentials")
+    suspend fun deleteAutoAiCredential()
+
     /** 返回应用设置单行。 */
     @Query("SELECT * FROM app_settings WHERE id = 1")
     suspend fun getSettings(): AppSettingsEntity?
@@ -820,6 +982,10 @@ interface AccountingDao {
     /** 清空全部支付账户映射。 */
     @Query("DELETE FROM auto_account_mappings")
     suspend fun deleteAllAutoAccountMappings()
+
+    /** 清空全部用户导入规则包。 */
+    @Query("DELETE FROM auto_rule_packs")
+    suspend fun clearAutoRulePacks()
 
     /** 清空全部账户-账本关联。 */
     @Query("DELETE FROM account_ledger_cross_ref")
@@ -862,11 +1028,13 @@ interface AccountingDao {
         autoBookkeepingEvents: List<AutoBookkeepingEventEntity>,
         autoCategoryMappings: List<AutoCategoryMappingEntity>,
         autoAccountMappings: List<AutoAccountMappingEntity>,
+        autoRulePacks: List<AutoRulePackEntity>,
         settings: AppSettingsEntity?,
     ) {
         deleteAllAutoBookkeepingEvents()
         deleteAllAutoCategoryMappings()
         deleteAllAutoAccountMappings()
+        clearAutoRulePacks()
         deleteAllTransactions()
         deleteAllAccountLedgerCrossRefs()
         deleteAllSettings()
@@ -885,6 +1053,7 @@ interface AccountingDao {
         autoBookkeepingEvents.forEach { insertAutoBookkeepingEvent(it) }
         autoCategoryMappings.forEach { upsertAutoCategoryMapping(it) }
         autoAccountMappings.forEach { upsertAutoAccountMapping(it) }
+        autoRulePacks.forEach { insertAutoRulePack(it) }
         upsertSettings(settings ?: AppSettingsEntity())
         ensureDefaultAccount()
         ensureCurrentLedger()
@@ -1374,6 +1543,26 @@ interface AccountingDao {
         toTime: Long,
     ): AutoBookkeepingEventEntity?
 
+    /** 按平台、方向和金额返回时间窗内可进一步比较的去重候选。 */
+    @Query(
+        """
+        SELECT * FROM auto_bookkeeping_events
+        WHERE provider = :provider
+          AND type = :type
+          AND amount_minor = :amountMinor
+          AND occurred_at BETWEEN :fromTime AND :toTime
+        ORDER BY ABS(occurred_at - :occurredAt), id DESC
+        """,
+    )
+    suspend fun findAutoBookkeepingMergeCandidates(
+        provider: PaymentProvider,
+        type: TransactionType,
+        amountMinor: Long,
+        occurredAt: Long,
+        fromTime: Long,
+        toTime: Long,
+    ): List<AutoBookkeepingEventEntity>
+
     /** 插入一条自动账单事件，摘要冲突时由调用方重新读取既有事件。 */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAutoBookkeepingEvent(event: AutoBookkeepingEventEntity): Long
@@ -1606,9 +1795,12 @@ interface AccountingDao {
         AutoBookkeepingEventEntity::class,
         AutoCategoryMappingEntity::class,
         AutoAccountMappingEntity::class,
+        AutoRulePackEntity::class,
+        AutoHookHeartbeatEntity::class,
+        AutoAiCredentialEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1645,6 +1837,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_17_18,
             MIGRATION_18_19,
             MIGRATION_19_20,
+            MIGRATION_20_21,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2468,6 +2661,91 @@ abstract class AccountingDatabase : RoomDatabase() {
                 )
                 connection.executeMigrationSql(
                     "DELETE FROM auto_category_mappings WHERE type IN ('REFUND', 'TRANSFER')",
+                )
+            }
+        }
+
+        internal val MIGRATION_20_21 = object : Migration(20, 21) {
+            /** 增加多通道采集、声明式规则、Hook 心跳与私有 AI 所需数据。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE auto_bookkeeping_events ADD COLUMN field_provenance_json TEXT NOT NULL DEFAULT '{}'",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE auto_bookkeeping_events ADD COLUMN rule_id TEXT",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE auto_bookkeeping_events ADD COLUMN rule_pack_version INTEGER",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE auto_bookkeeping_events ADD COLUMN has_conflict INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE auto_bookkeeping_events ADD COLUMN ai_assisted INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_local_ocr_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_root_ocr_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_xposed_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_cloud_ai_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_ai_base_url TEXT NOT NULL DEFAULT ''",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_ai_model TEXT NOT NULL DEFAULT ''",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_ai_vision_enabled INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_ai_allow_insecure_lan_http INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN auto_ai_allow_one_tap_confirm INTEGER NOT NULL DEFAULT 0",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_rule_packs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        pack_id TEXT NOT NULL,
+                        pack_version INTEGER NOT NULL,
+                        json_content TEXT NOT NULL,
+                        is_active INTEGER NOT NULL,
+                        imported_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    "CREATE UNIQUE INDEX index_auto_rule_packs_pack_id_pack_version ON auto_rule_packs (pack_id, pack_version)",
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_hook_heartbeats (
+                        provider TEXT NOT NULL PRIMARY KEY,
+                        package_name TEXT NOT NULL,
+                        app_version TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        last_loaded_at INTEGER NOT NULL,
+                        last_capture_at INTEGER
+                    )
+                    """.trimIndent(),
+                )
+                connection.executeMigrationSql(
+                    """
+                    CREATE TABLE IF NOT EXISTS auto_ai_credentials (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        cipher_text BLOB NOT NULL,
+                        initialization_vector BLOB NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
                 )
             }
         }

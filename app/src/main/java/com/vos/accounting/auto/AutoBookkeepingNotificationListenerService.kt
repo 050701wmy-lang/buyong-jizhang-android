@@ -25,13 +25,13 @@ class AutoBookkeepingNotificationListenerService : NotificationListenerService()
     override fun onNotificationPosted(statusBarNotification: StatusBarNotification?) {
         val notification = statusBarNotification ?: return
         if (!isSupportedPaymentPackage(notification.packageName)) return
-        val capture = parseAutoBookkeepingText(
+        val input = RuleInput(
             packageName = notification.packageName,
             textParts = notificationTextParts(notification.notification),
             source = AutoCaptureSource.NOTIFICATION,
             occurredAt = notification.postTime.takeIf { it > 0 } ?: System.currentTimeMillis(),
-        ) ?: return
-        serviceScope.launch { captureHandler.handle(capture) }
+        )
+        serviceScope.launch { captureHandler.handle(input) }
     }
 
     /** 结束服务协程，避免持有通知监听实例。 */

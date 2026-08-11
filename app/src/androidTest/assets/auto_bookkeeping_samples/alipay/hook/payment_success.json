@@ -1,0 +1,15 @@
+{
+  "kind": "CAPTURE",
+  "provider": "ALIPAY",
+  "package_name": "com.eg.android.AlipayGphone",
+  "app_version": "12.12.6.8000",
+  "adapter_id": "alipay_12_12_6_text_result",
+  "adapter_status": "ACTIVE",
+  "type": "EXPENSE",
+  "amount": "12.34",
+  "currency": "cny",
+  "merchant": "测试商户",
+  "payment_method": "余额宝",
+  "external_transaction_id": "test_external_id",
+  "occurred_at": 1786406400000
+}

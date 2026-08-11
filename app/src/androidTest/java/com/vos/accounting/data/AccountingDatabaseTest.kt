@@ -907,4 +907,82 @@ class AccountingDatabaseTest {
         assertEquals(2, dao.getAllTransactions().size)
     }
 
+    /** 验证多来源优先级、相同交易号金额冲突与无交易号合并边界。 */
+    @Test
+    fun autoBookkeepingMergesSourcesAndRejectsAmountConflictConfirmation() = runBlocking {
+        repository.initialize()
+        repository.updateAutoBookkeepingEnabled(true)
+        val ocr = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.ALIPAY,
+                source = AutoCaptureSource.LOCAL_OCR,
+                type = TransactionType.EXPENSE,
+                amountMinor = 1000,
+                merchant = "",
+                occurredAt = 100_000,
+                externalKeyHash = "same_external_hash",
+                fieldProvenance = mapOf("amount" to AutoCaptureSource.LOCAL_OCR),
+            ),
+        )
+        val hook = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.ALIPAY,
+                source = AutoCaptureSource.XPOSED,
+                type = TransactionType.EXPENSE,
+                amountMinor = 1200,
+                merchant = "测试商户",
+                occurredAt = 100_500,
+                paymentMethodKey = "余额宝",
+                externalKeyHash = "same_external_hash",
+                fieldProvenance = mapOf(
+                    "type" to AutoCaptureSource.XPOSED,
+                    "amount" to AutoCaptureSource.XPOSED,
+                    "merchant" to AutoCaptureSource.XPOSED,
+                ),
+            ),
+        )
+
+        assertEquals(ocr?.id, hook?.id)
+        assertEquals(1200L, hook?.amountMinor)
+        assertEquals(true, hook?.hasConflict)
+        assertEquals(false, hook?.canConfirm)
+        assertTrue(hook?.captureSources.orEmpty().contains("LOCAL_OCR"))
+        assertTrue(hook?.captureSources.orEmpty().contains("XPOSED"))
+        assertTrue(hook?.fieldProvenanceJson.orEmpty().contains("XPOSED"))
+
+        val firstWithoutId = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.NOTIFICATION,
+                type = TransactionType.EXPENSE,
+                amountMinor = 880,
+                merchant = "",
+                occurredAt = 200_000,
+            ),
+        )
+        val matchingWithoutId = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.ACCESSIBILITY,
+                type = TransactionType.EXPENSE,
+                amountMinor = 880,
+                merchant = "便利店",
+                occurredAt = 200_500,
+            ),
+        )
+        val differentAmount = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.ACCESSIBILITY,
+                type = TransactionType.EXPENSE,
+                amountMinor = 990,
+                merchant = "便利店",
+                occurredAt = 200_700,
+            ),
+        )
+
+        assertEquals(firstWithoutId?.id, matchingWithoutId?.id)
+        assertTrue(differentAmount?.id != matchingWithoutId?.id)
+    }
+
 }

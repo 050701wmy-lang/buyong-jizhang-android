@@ -53,6 +53,7 @@ class BackupManager(
             autoBookkeepingEvents = dao.getAllAutoBookkeepingEvents(),
             autoCategoryMappings = dao.getAllAutoCategoryMappings(),
             autoAccountMappings = dao.getAllAutoAccountMappings(),
+            autoRulePacks = dao.getAllAutoRulePacks(),
             settings = dao.getSettings(),
             media = mediaRefs,
         )
@@ -93,6 +94,7 @@ class BackupManager(
             autoBookkeepingEvents = data.autoBookkeepingEvents,
             autoCategoryMappings = data.autoCategoryMappings,
             autoAccountMappings = data.autoAccountMappings,
+            autoRulePacks = data.autoRulePacks,
             settings = data.settings,
         )
     }

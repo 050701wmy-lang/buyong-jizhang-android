@@ -464,9 +464,7 @@ fun AccountingApp(
                             uiState = uiState,
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
-                            onEnabledChange = viewModel::updateAutoBookkeepingEnabled,
-                            onProviderEnabledChange = viewModel::updateAutoBookkeepingProviderEnabled,
-                            onPrivacyModeChange = viewModel::updateNotificationPrivacyMode,
+                            viewModel = viewModel,
                         )
                     }
                     entry<AutoBookkeepingPendingRoute> {

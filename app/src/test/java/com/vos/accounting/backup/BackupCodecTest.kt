@@ -7,6 +7,7 @@ import com.vos.accounting.data.AppSettingsEntity
 import com.vos.accounting.data.AutoAccountMappingEntity
 import com.vos.accounting.data.AutoBookkeepingEventEntity
 import com.vos.accounting.data.AutoCategoryMappingEntity
+import com.vos.accounting.data.AutoRulePackEntity
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
 import com.vos.accounting.data.LedgerEntity
@@ -213,13 +214,22 @@ class BackupCodecTest {
             autoAccountMappings = listOf(
                 AutoAccountMappingEntity(PaymentProvider.WECHAT, "零钱", 2),
             ),
+            autoRulePacks = listOf(
+                AutoRulePackEntity(
+                    packId = "user.test",
+                    packVersion = 1,
+                    jsonContent = "{}",
+                    importedAt = 10,
+                ),
+            ),
         )
 
         val restored = BackupCodec.unzip(BackupCodec.buildZip(data, emptyMap())).data
 
-        assertEquals(4, restored.formatVersion)
+        assertEquals(5, restored.formatVersion)
         assertEquals(event, restored.autoBookkeepingEvents.single())
         assertEquals(3, restored.autoCategoryMappings.single().categoryId)
         assertEquals(2, restored.autoAccountMappings.single().accountId)
+        assertEquals("user.test", restored.autoRulePacks.single().packId)
     }
 }

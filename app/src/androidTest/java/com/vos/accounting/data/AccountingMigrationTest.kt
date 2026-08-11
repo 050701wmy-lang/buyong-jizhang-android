@@ -666,6 +666,53 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v20 升级后多通道能力默认关闭且新增表可用。 */
+    @Test
+    fun migrateVersionTwentyToVersionTwentyOne() {
+        helper.createDatabase(DATABASE_NAME, 20).apply {
+            execSQL(
+                "INSERT INTO currencies (`key`, code, name, symbol, rate_to_cny_scaled, is_builtin, updated_at, auto_rate_enabled) " +
+                    "VALUES ('cny','CNY','人民币','¥',100000000,1,0,1)",
+            )
+            execSQL(
+                "INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) " +
+                    "VALUES (1,'日常账本','cover_ocean',1,'cny',0,0)",
+            )
+            execSQL(
+                "INSERT INTO app_settings (id, theme_mode, follow_system_color, predictive_back_animation_enabled, " +
+                    "colored_transaction_amounts_enabled, current_ledger_id, auto_bookkeeping_enabled, " +
+                    "auto_bookkeeping_wechat_enabled, auto_bookkeeping_alipay_enabled, " +
+                    "auto_bookkeeping_unionpay_enabled, notification_privacy_mode) " +
+                    "VALUES (1,'SYSTEM',1,0,0,1,1,1,1,1,'HIDE_ON_LOCK_SCREEN')",
+            )
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            21,
+            true,
+            AccountingDatabase.MIGRATION_20_21,
+        )
+        migrated.query(
+            "SELECT auto_local_ocr_enabled, auto_root_ocr_enabled, auto_xposed_enabled, " +
+                "auto_cloud_ai_enabled, auto_ai_vision_enabled, auto_ai_allow_insecure_lan_http, " +
+                "auto_ai_allow_one_tap_confirm FROM app_settings WHERE id = 1",
+        ).use {
+            it.moveToFirst()
+            repeat(7) { index -> assertEquals(0, it.getInt(index)) }
+        }
+        migrated.execSQL(
+            "INSERT INTO auto_rule_packs (pack_id, pack_version, json_content, is_active, imported_at) " +
+                "VALUES ('test.pack', 1, '{}', 1, 1)",
+        )
+        migrated.query("SELECT COUNT(*) FROM auto_rule_packs").use {
+            it.moveToFirst()
+            assertEquals(1, it.getInt(0))
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */

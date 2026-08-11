@@ -4,6 +4,7 @@ import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
 import com.vos.accounting.model.AutoBookkeepingCapture
 import com.vos.accounting.model.AutoBookkeepingStatus
+import com.vos.accounting.model.AutoCaptureSource
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
@@ -20,6 +21,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 
 /**
@@ -49,6 +53,7 @@ class AccountingRepository(
     val categories = dao.observeCategories()
     val settings = dao.observeSettings()
     val pendingAutoBookkeepingEvents = dao.observePendingAutoBookkeepingEvents()
+    val autoHookHeartbeats = dao.observeAutoHookHeartbeats()
     private val currentLedgerId: Flow<Long> = settings
         .map { it?.currentLedgerId ?: 1L }
         .distinctUntilChanged()
@@ -141,6 +146,59 @@ class AccountingRepository(
         dao.updateNotificationPrivacyMode(mode)
     }
 
+    /** 更新本地 OCR 开关。 */
+    suspend fun updateAutoLocalOcrEnabled(enabled: Boolean) = dao.updateAutoLocalOcrEnabled(enabled)
+
+    /** 更新 Root OCR 开关。 */
+    suspend fun updateAutoRootOcrEnabled(enabled: Boolean) = dao.updateAutoRootOcrEnabled(enabled)
+
+    /** 更新 LSPosed 采集开关。 */
+    suspend fun updateAutoXposedEnabled(enabled: Boolean) = dao.updateAutoXposedEnabled(enabled)
+
+    /** 更新私有云 AI 开关。 */
+    suspend fun updateAutoCloudAiEnabled(enabled: Boolean) = dao.updateAutoCloudAiEnabled(enabled)
+
+    /** 更新私有云 AI 非敏感端点配置。 */
+    suspend fun updateAutoAiEndpoint(baseUrl: String, model: String) =
+        dao.updateAutoAiEndpoint(baseUrl.trim(), model.trim())
+
+    /** 更新视觉识别风险开关。 */
+    suspend fun updateAutoAiVisionEnabled(enabled: Boolean) = dao.updateAutoAiVisionEnabled(enabled)
+
+    /** 更新私网 HTTP 风险开关。 */
+    suspend fun updateAutoAiAllowInsecureLanHttp(enabled: Boolean) =
+        dao.updateAutoAiAllowInsecureLanHttp(enabled)
+
+    /** 更新 AI 一键确认风险开关。 */
+    suspend fun updateAutoAiAllowOneTapConfirm(enabled: Boolean) =
+        dao.updateAutoAiAllowOneTapConfirm(enabled)
+
+    /** 返回当前激活的用户导入规则包。 */
+    suspend fun getActiveAutoRulePacks(): List<AutoRulePackEntity> = dao.getActiveAutoRulePacks()
+
+    /** 原子激活已经通过完整校验的用户规则包。 */
+    suspend fun activateAutoRulePack(rulePack: AutoRulePackEntity) = dao.activateAutoRulePack(rulePack)
+
+    /** 清空用户导入规则并恢复内置规则。 */
+    suspend fun restoreBuiltinAutoRules() = dao.deleteAllAutoRulePacks()
+
+    /** 保存由 Android Keystore 加密后的私有 AI 凭据。 */
+    suspend fun upsertAutoAiCredential(credential: AutoAiCredentialEntity) = dao.upsertAutoAiCredential(credential)
+
+    /** 返回加密后的私有 AI 凭据。 */
+    suspend fun findAutoAiCredential(): AutoAiCredentialEntity? = dao.findAutoAiCredential()
+
+    /** 删除私有 AI 凭据。 */
+    suspend fun deleteAutoAiCredential() = dao.deleteAutoAiCredential()
+
+    /** 保存 Hook 装载或采集心跳。 */
+    suspend fun upsertAutoHookHeartbeat(heartbeat: AutoHookHeartbeatEntity) =
+        dao.upsertAutoHookHeartbeat(heartbeat)
+
+    /** 返回指定平台的 Hook 心跳。 */
+    suspend fun findAutoHookHeartbeat(provider: PaymentProvider): AutoHookHeartbeatEntity? =
+        dao.findAutoHookHeartbeat(provider)
+
     /** 返回当前应用设置快照。 */
     suspend fun getSettingsSnapshot(): AppSettingsEntity = dao.getSettings() ?: AppSettingsEntity()
 
@@ -153,52 +211,125 @@ class AccountingRepository(
         )
         val merchantKey = normalizeAutoKey(capture.merchant)
         val paymentMethodKey = normalizeAutoKey(capture.paymentMethodKey)
-        val fingerprint = autoFingerprint(capture, merchantKey, paymentMethodKey)
         val existing = capture.externalKeyHash?.let { hash ->
             dao.findAutoBookkeepingEventByExternalKey(hash)
         }
-            ?: dao.findAutoBookkeepingEventByFingerprint(
+            ?: dao.findAutoBookkeepingMergeCandidates(
                 provider = capture.provider,
-                fingerprint = fingerprint,
+                type = capture.type,
+                amountMinor = capture.amountMinor,
                 occurredAt = capture.occurredAt,
                 fromTime = capture.occurredAt - AUTO_DUPLICATE_WINDOW_MILLIS,
                 toTime = capture.occurredAt + AUTO_DUPLICATE_WINDOW_MILLIS,
-        )
+            ).firstOrNull { candidate ->
+                autoKeysCompatible(normalizeAutoKey(candidate.merchant), merchantKey) &&
+                    autoKeysCompatible(candidate.paymentMethodKey, paymentMethodKey)
+            }
         if (existing != null && existing.status != AutoBookkeepingStatus.PENDING) return null
         val eventLedgerId = existing?.ledgerId ?: settings.currentLedgerId
+        val existingProvenance = existing?.fieldProvenanceJson?.let(::decodeAutoProvenance).orEmpty()
+        val incomingProvenance = capture.fieldProvenance.toMutableMap().apply {
+            putIfAbsent(AUTO_FIELD_TYPE, capture.source)
+            putIfAbsent(AUTO_FIELD_AMOUNT, capture.source)
+            if (capture.merchant.isNotBlank()) putIfAbsent(AUTO_FIELD_MERCHANT, capture.source)
+            if (capture.paymentMethodKey.isNotBlank()) putIfAbsent(AUTO_FIELD_PAYMENT_METHOD, capture.source)
+            if (capture.externalKeyHash != null) putIfAbsent(AUTO_FIELD_EXTERNAL_KEY, capture.source)
+        }
+        val defaultExistingSource = existing?.captureSources
+            ?.split(',')
+            ?.mapNotNull { name -> AutoCaptureSource.entries.firstOrNull { it.name == name } }
+            ?.maxByOrNull(::autoSourcePriority)
+            ?: capture.source
+        val amountConflict = existing != null && existing.externalKeyHash != null &&
+            existing.externalKeyHash == capture.externalKeyHash && existing.amountMinor != capture.amountMinor
+        val mergedType = chooseAutoValue(
+            existing?.type,
+            capture.type,
+            existingProvenance[AUTO_FIELD_TYPE] ?: defaultExistingSource,
+            incomingProvenance.getValue(AUTO_FIELD_TYPE),
+        )
+        val mergedAmount = chooseAutoValue(
+            existing?.amountMinor,
+            capture.amountMinor,
+            existingProvenance[AUTO_FIELD_AMOUNT] ?: defaultExistingSource,
+            incomingProvenance.getValue(AUTO_FIELD_AMOUNT),
+        )
+        val mergedMerchant = chooseAutoText(
+            existing?.merchant,
+            capture.merchant,
+            existingProvenance[AUTO_FIELD_MERCHANT] ?: defaultExistingSource,
+            incomingProvenance[AUTO_FIELD_MERCHANT] ?: capture.source,
+        )
+        val mergedPaymentMethod = chooseAutoText(
+            existing?.paymentMethodKey,
+            paymentMethodKey,
+            existingProvenance[AUTO_FIELD_PAYMENT_METHOD] ?: defaultExistingSource,
+            incomingProvenance[AUTO_FIELD_PAYMENT_METHOD] ?: capture.source,
+        )
+        val mergedCapture = capture.copy(
+            type = mergedType,
+            amountMinor = mergedAmount,
+            merchant = mergedMerchant,
+            paymentMethodKey = mergedPaymentMethod,
+        )
+        val mergedMerchantKey = normalizeAutoKey(mergedMerchant)
+        val mergedPaymentMethodKey = normalizeAutoKey(mergedPaymentMethod)
         val prediction = predictAutoBookkeeping(
-            capture = capture,
+            capture = mergedCapture,
             ledgerId = eventLedgerId,
-            merchantKey = merchantKey,
-            paymentMethodKey = paymentMethodKey,
+            merchantKey = mergedMerchantKey,
+            paymentMethodKey = mergedPaymentMethodKey,
         )
         val now = System.currentTimeMillis()
-        val mergedSources = ((existing?.captureSources?.split(',') ?: emptyList()) + capture.source.name)
+        val aiAssisted = existing?.aiAssisted == true || capture.aiAssisted ||
+            capture.source == AutoCaptureSource.CLOUD_AI
+        val mergedSources = (
+            (existing?.captureSources?.split(',') ?: emptyList()) +
+                capture.source.name + capture.fieldProvenance.values.map(AutoCaptureSource::name) +
+                if (capture.aiAssisted) listOf(AutoCaptureSource.CLOUD_AI.name) else emptyList()
+            )
             .filter(String::isNotBlank)
             .distinct()
             .joinToString(",")
+        val hasConflict = existing?.hasConflict == true || capture.hasConflict || amountConflict
+        val mergedProvenance = mergeAutoProvenance(
+            existing = existingProvenance,
+            incoming = incomingProvenance,
+        )
+        val aiCanConfirm = !aiAssisted || settings.autoAiAllowOneTapConfirm
+        val incomingRuleHasPriority = existing == null || existing.ruleId == null ||
+            autoSourcePriority(capture.source) > autoSourcePriority(defaultExistingSource)
         val event = AutoBookkeepingEventEntity(
             id = existing?.id ?: 0,
             provider = capture.provider,
             status = AutoBookkeepingStatus.PENDING,
-            type = capture.type,
-            amountMinor = capture.amountMinor,
+            type = mergedType,
+            amountMinor = mergedAmount,
             currencyKey = capture.currencyKey,
             accountId = existing?.accountId ?: prediction.accountId,
             categoryId = existing?.categoryId ?: prediction.categoryId,
-            merchant = capture.merchant.trim().ifEmpty { existing?.merchant.orEmpty() },
+            merchant = mergedMerchant,
             note = capture.note.trim().ifEmpty { existing?.note.orEmpty() },
             occurredAt = minOf(existing?.occurredAt ?: capture.occurredAt, capture.occurredAt),
-            paymentMethodKey = paymentMethodKey.ifEmpty { existing?.paymentMethodKey.orEmpty() },
+            paymentMethodKey = mergedPaymentMethodKey,
             destinationPaymentMethodKey = "",
             externalKeyHash = capture.externalKeyHash ?: existing?.externalKeyHash,
-            fingerprint = fingerprint,
+            fingerprint = autoFingerprint(mergedCapture, mergedMerchantKey, mergedPaymentMethodKey),
             captureSources = mergedSources,
-            canConfirm = existing?.canConfirm == true || prediction.canConfirm,
+            canConfirm = !hasConflict && aiCanConfirm && (existing?.canConfirm == true || prediction.canConfirm),
             ledgerId = eventLedgerId,
             confirmedTransactionId = null,
             createdAt = existing?.createdAt ?: now,
             updatedAt = now,
+            fieldProvenanceJson = encodeAutoProvenance(mergedProvenance),
+            ruleId = if (incomingRuleHasPriority) capture.ruleId ?: existing?.ruleId else existing?.ruleId,
+            rulePackVersion = if (incomingRuleHasPriority) {
+                capture.rulePackVersion ?: existing?.rulePackVersion
+            } else {
+                existing?.rulePackVersion
+            },
+            hasConflict = hasConflict,
+            aiAssisted = aiAssisted,
         )
         if (existing != null) {
             dao.updateAutoBookkeepingEvent(event)
@@ -857,6 +988,13 @@ class AccountingRepository(
 
 private const val AUTO_EVENT_RETENTION_MILLIS = 90L * 24 * 60 * 60 * 1000
 private const val AUTO_DUPLICATE_WINDOW_MILLIS = 3L * 60 * 1000
+private const val AUTO_FIELD_TYPE = "type"
+private const val AUTO_FIELD_AMOUNT = "amount"
+private const val AUTO_FIELD_MERCHANT = "merchant"
+private const val AUTO_FIELD_PAYMENT_METHOD = "payment_method"
+private const val AUTO_FIELD_EXTERNAL_KEY = "external_key"
+private val autoProvenanceSerializer = MapSerializer(String.serializer(), AutoCaptureSource.serializer())
+private val autoProvenanceJson = Json { encodeDefaults = true }
 
 /** 判断应用设置是否允许采集指定支付平台。 */
 private fun AppSettingsEntity.isProviderEnabled(provider: PaymentProvider): Boolean = when (provider) {
@@ -870,6 +1008,65 @@ private fun normalizeAutoKey(value: String): String = value
     .trim()
     .lowercase()
     .replace(Regex("\\s+"), "")
+
+/** 判断两个可空白规范化字段是否允许合并为同一候选。 */
+private fun autoKeysCompatible(first: String, second: String): Boolean =
+    first.isEmpty() || second.isEmpty() || first == second
+
+/** 返回采集来源的字段覆盖优先级。 */
+private fun autoSourcePriority(source: AutoCaptureSource): Int = when (source) {
+    AutoCaptureSource.XPOSED -> 50
+    AutoCaptureSource.ACCESSIBILITY, AutoCaptureSource.NOTIFICATION -> 40
+    AutoCaptureSource.LOCAL_OCR, AutoCaptureSource.ROOT_OCR -> 30
+    AutoCaptureSource.CLOUD_AI -> 20
+}
+
+/** 按来源优先级选择结构化字段，相同优先级保留先到值。 */
+private fun <T : Any> chooseAutoValue(
+    existing: T?,
+    incoming: T,
+    existingSource: AutoCaptureSource,
+    incomingSource: AutoCaptureSource,
+): T = if (existing == null || autoSourcePriority(incomingSource) > autoSourcePriority(existingSource)) {
+    incoming
+} else {
+    existing
+}
+
+/** 按来源优先级选择文本字段，空值只能补充不能清除。 */
+private fun chooseAutoText(
+    existing: String?,
+    incoming: String,
+    existingSource: AutoCaptureSource,
+    incomingSource: AutoCaptureSource,
+): String {
+    val old = existing.orEmpty().trim()
+    val new = incoming.trim()
+    if (new.isEmpty()) return old
+    if (old.isEmpty()) return new
+    return if (autoSourcePriority(incomingSource) > autoSourcePriority(existingSource)) new else old
+}
+
+/** 把字段来源编码为不含原始页面内容的 JSON。 */
+private fun encodeAutoProvenance(value: Map<String, AutoCaptureSource>): String =
+    autoProvenanceJson.encodeToString(autoProvenanceSerializer, value)
+
+/** 容错读取历史事件的字段来源 JSON。 */
+private fun decodeAutoProvenance(value: String): Map<String, AutoCaptureSource> = runCatching {
+    autoProvenanceJson.decodeFromString(autoProvenanceSerializer, value)
+}.getOrDefault(emptyMap())
+
+/** 合并字段来源并让更高优先级来源保留所有权。 */
+private fun mergeAutoProvenance(
+    existing: Map<String, AutoCaptureSource>,
+    incoming: Map<String, AutoCaptureSource>,
+): Map<String, AutoCaptureSource> = buildMap {
+    existing.forEach { (field, source) -> put(field, source) }
+    incoming.forEach { (field, source) ->
+        val previous = get(field)
+        if (previous == null || autoSourcePriority(source) > autoSourcePriority(previous)) put(field, source)
+    }
+}
 
 /** 为缺少外部交易号的采集结果生成不含原始页面文本的防重摘要。 */
 private fun autoFingerprint(
