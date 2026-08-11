@@ -54,6 +54,7 @@ data class HookCapturePayload(
     val amount: String? = null,
     val currency: String = "cny",
     val merchant: String = "",
+    val note: String = "",
     @SerialName("payment_method")
     val paymentMethod: String = "",
     @SerialName("external_transaction_id")
@@ -160,6 +161,7 @@ private class HookCaptureProcessor(context: Context) {
             amountMinor = amountMinor,
             currencyKey = currency,
             merchant = payload.merchant.trim().take(200),
+            note = payload.note.trim().take(200),
             occurredAt = payload.occurredAt.takeIf { it > 0 } ?: now,
             paymentMethodKey = payload.paymentMethod.trim().take(200),
             externalKeyHash = payload.externalTransactionId
@@ -172,6 +174,7 @@ private class HookCaptureProcessor(context: Context) {
                 put("type", AutoCaptureSource.XPOSED)
                 put("amount", AutoCaptureSource.XPOSED)
                 if (payload.merchant.isNotBlank()) put("merchant", AutoCaptureSource.XPOSED)
+                if (payload.note.isNotBlank()) put("note", AutoCaptureSource.XPOSED)
                 if (payload.paymentMethod.isNotBlank()) put("payment_method", AutoCaptureSource.XPOSED)
                 if (!payload.externalTransactionId.isNullOrBlank()) put("external_key", AutoCaptureSource.XPOSED)
             },

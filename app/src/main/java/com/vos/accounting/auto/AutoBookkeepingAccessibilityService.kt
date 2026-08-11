@@ -131,7 +131,6 @@ class AutoBookkeepingAccessibilityService : AccessibilityService() {
             repeat(node.childCount) { index -> node.getChild(index)?.let(nodes::addLast) }
         }
         val parts = (eventText + text).filter(String::isNotBlank).distinct()
-        if (parts.isEmpty()) return null
         val fingerprint = sha256(structure.append("--text--\n").append(parts.joinToString("\n")).toString())
         return PageSnapshot(parts, fingerprint)
     }
