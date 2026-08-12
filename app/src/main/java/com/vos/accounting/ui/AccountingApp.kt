@@ -125,6 +125,10 @@ data object BackupRoute : AccountingRoute
 @Serializable
 data object AutoBookkeepingSettingsRoute : AccountingRoute
 
+/** 表示声明式识别规则管理二级页面。 */
+@Serializable
+data object AutoRuleManagementRoute : AccountingRoute
+
 /** 表示全部待确认自动账单列表。 */
 @Serializable
 data object AutoBookkeepingPendingRoute : AccountingRoute
@@ -462,6 +466,14 @@ fun AccountingApp(
                     entry<AutoBookkeepingSettingsRoute> {
                         AutoBookkeepingSettingsScreen(
                             uiState = uiState,
+                            backdrop = backdrop,
+                            onBack = { backStack.removeAt(backStack.lastIndex) },
+                            onOpenRuleManagement = { navigateTo(AutoRuleManagementRoute) },
+                            viewModel = viewModel,
+                        )
+                    }
+                    entry<AutoRuleManagementRoute> {
+                        AutoRuleManagementScreen(
                             backdrop = backdrop,
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             viewModel = viewModel,

@@ -11,6 +11,9 @@ import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
 import java.math.BigDecimal
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -136,15 +139,7 @@ class AutoBookkeepingRuleEngine(
     /** 校验完成后原子激活用户导入规则包。 */
     suspend fun importRulePack(bytes: ByteArray): AutoRulePackEntity {
         val pack = validateImportedRulePack(bytes)
-        val activeRuleIds = repository.getActiveAutoRulePacks()
-            .filter { it.packId != pack.packId }
-            .flatMap { entity ->
-                runCatching {
-                    json.decodeFromString(RulePackV1.serializer(), entity.jsonContent).rules.map(AutoBookkeepingRuleV1::id)
-                }.getOrDefault(emptyList())
-            }
-            .toSet()
-        require(pack.rules.none { it.id in activeRuleIds }) { "规则标识与已激活规则重复" }
+        requireNoActiveRuleConflicts(pack)
         val entity = AutoRulePackEntity(
             packId = pack.packId,
             packVersion = pack.packVersion,
@@ -153,6 +148,27 @@ class AutoBookkeepingRuleEngine(
         )
         repository.activateAutoRulePack(entity)
         return entity
+    }
+
+    /** 读取并校验随 APK 提供的内置规则包。 */
+    fun readBuiltinRulePack(): RulePackV1 {
+        val text = context.assets.open(BUILTIN_RULE_ASSET).bufferedReader().use { it.readText() }
+        return json.decodeFromString(RulePackV1.serializer(), text).also(::validateRulePack)
+    }
+
+    /** 解析并校验数据库中已经保存的用户规则包。 */
+    fun readStoredRulePack(entity: AutoRulePackEntity): RulePackV1 =
+        json.decodeFromString(RulePackV1.serializer(), entity.jsonContent).also(::validateRulePack)
+
+    /** 启用或停用用户规则包，并在重新启用前检查标识冲突。 */
+    suspend fun updateRulePackActive(entity: AutoRulePackEntity, active: Boolean) {
+        if (!active) {
+            repository.deactivateAutoRulePack(entity.packId)
+            return
+        }
+        val pack = readStoredRulePack(entity)
+        requireNoActiveRuleConflicts(pack)
+        repository.activateAutoRulePack(entity.copy(isActive = true))
     }
 
     /** 校验规则包结构、重复标识、字段和所有线性正则。 */
@@ -185,13 +201,21 @@ class AutoBookkeepingRuleEngine(
     /** 读取用户激活规则和 APK 内置规则，用户规则始终优先。 */
     private suspend fun loadRulePacks(): List<RulePackV1> {
         val imported = repository.getActiveAutoRulePacks().mapNotNull { entity ->
-            runCatching {
-                json.decodeFromString(RulePackV1.serializer(), entity.jsonContent).also(::validateRulePack)
-            }.getOrNull()
+            runCatching { readStoredRulePack(entity) }.getOrNull()
         }
-        val builtinText = context.assets.open(BUILTIN_RULE_ASSET).bufferedReader().use { it.readText() }
-        val builtin = json.decodeFromString(RulePackV1.serializer(), builtinText).also(::validateRulePack)
-        return imported + builtin
+        return imported + readBuiltinRulePack()
+    }
+
+    /** 拒绝与其他已激活规则包重复的规则标识。 */
+    private suspend fun requireNoActiveRuleConflicts(pack: RulePackV1) {
+        val activeRuleIds = repository.getActiveAutoRulePacks()
+            .filter { it.packId != pack.packId }
+            .flatMap { entity ->
+                runCatching { readStoredRulePack(entity).rules.map(AutoBookkeepingRuleV1::id) }
+                    .getOrDefault(emptyList())
+            }
+            .toSet()
+        require(pack.rules.none { it.id in activeRuleIds }) { "规则标识与已激活规则重复" }
     }
 
     /** 判断规则的平台、来源、版本、页面和关键词约束是否全部成立。 */
@@ -227,6 +251,9 @@ class AutoBookkeepingRuleEngine(
         val merchant = extractFirst(rule.fields[FIELD_MERCHANT], lines, jsonRoot).orEmpty()
         val paymentMethod = extractFirst(rule.fields[FIELD_PAYMENT_METHOD], lines, jsonRoot).orEmpty()
         val externalKey = extractFirst(rule.fields[FIELD_EXTERNAL_KEY], lines, jsonRoot)
+        val occurredAt = extractFirst(rule.fields[FIELD_OCCURRED_AT], lines, jsonRoot)
+            ?.let(::parseOccurredAt)
+            ?: input.occurredAt
         val currency = extractFirst(rule.fields[FIELD_CURRENCY], lines, jsonRoot)
             ?.lowercase()
             ?.takeIf { it.matches(Regex("[a-z]{3}")) }
@@ -238,6 +265,7 @@ class AutoBookkeepingRuleEngine(
             if (merchant.isNotEmpty()) put(FIELD_MERCHANT, input.source)
             if (paymentMethod.isNotEmpty()) put(FIELD_PAYMENT_METHOD, input.source)
             if (externalKey != null) put(FIELD_EXTERNAL_KEY, input.source)
+            if (occurredAt != input.occurredAt) put(FIELD_OCCURRED_AT, input.source)
         }
         return AutoBookkeepingCapture(
             provider = rule.provider,
@@ -247,7 +275,7 @@ class AutoBookkeepingRuleEngine(
             currencyKey = currency,
             merchant = merchant,
             note = note,
-            occurredAt = input.occurredAt,
+            occurredAt = occurredAt,
             paymentMethodKey = paymentMethod,
             externalKeyHash = externalKey?.let { hashExternalKey(rule.provider, it) },
             ruleId = rule.id,
@@ -344,10 +372,26 @@ private fun parseAmountMinor(value: String): Long? = runCatching {
     BigDecimal(value.replace(",", "")).movePointRight(2).longValueExact()
 }.getOrNull()?.takeIf { it in 1..MAX_AMOUNT_MINOR }
 
+/** 将规则提取的本地账单时间转换为毫秒时间戳。 */
+private fun parseOccurredAt(value: String): Long? = OCCURRED_AT_FORMATTERS.firstNotNullOfOrNull { formatter ->
+    runCatching {
+        LocalDateTime.parse(value.trim(), formatter)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+    }.getOrNull()
+}
+
+private val OCCURRED_AT_FORMATTERS = listOf(
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+    DateTimeFormatter.ofPattern("yyyy年M月d日 HH:mm:ss"),
+)
+
 private const val FIELD_TYPE = "type"
 private const val FIELD_AMOUNT = "amount"
 private const val FIELD_MERCHANT = "merchant"
 private const val FIELD_PAYMENT_METHOD = "payment_method"
 private const val FIELD_EXTERNAL_KEY = "external_key"
+private const val FIELD_OCCURRED_AT = "occurred_at"
 private const val FIELD_CURRENCY = "currency"
 private const val FIELD_NOTE = "note"

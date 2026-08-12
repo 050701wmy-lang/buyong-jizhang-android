@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.model.AutoBookkeepingCapture
+import com.vos.accounting.model.AutoBookkeepingStatus
 import com.vos.accounting.model.AutoCaptureSource
 import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.PaymentProvider
@@ -983,6 +984,100 @@ class AccountingDatabaseTest {
 
         assertEquals(firstWithoutId?.id, matchingWithoutId?.id)
         assertTrue(differentAmount?.id != matchingWithoutId?.id)
+    }
+
+    /** 验证忽略过的账单再次识别时重新进入待确认，并采用最新解析字段。 */
+    @Test
+    fun ignoredAutoBookkeepingCaptureBecomesPendingAgain() = runBlocking {
+        repository.initialize()
+        repository.updateAutoBookkeepingEnabled(true)
+        val first = requireNotNull(
+            repository.captureAutoBookkeeping(
+                AutoBookkeepingCapture(
+                    provider = PaymentProvider.WECHAT,
+                    source = AutoCaptureSource.XPOSED,
+                    type = TransactionType.EXPENSE,
+                    amountMinor = 700,
+                    merchant = "交易详情",
+                    occurredAt = 100_000,
+                    externalKeyHash = "ignored_hash",
+                ),
+            ),
+        )
+        repository.ignoreAutoBookkeepingEvent(first.id)
+
+        val reopened = requireNotNull(
+            repository.captureAutoBookkeeping(
+                AutoBookkeepingCapture(
+                    provider = PaymentProvider.WECHAT,
+                    source = AutoCaptureSource.XPOSED,
+                    type = TransactionType.EXPENSE,
+                    amountMinor = 700,
+                    merchant = "蜜雪冰城",
+                    note = "蜜雪冰城928085店",
+                    occurredAt = 100_000,
+                    externalKeyHash = "ignored_hash",
+                ),
+            ),
+        )
+
+        assertEquals(first.id, reopened.id)
+        assertEquals(AutoBookkeepingStatus.PENDING, reopened.status)
+        assertEquals("蜜雪冰城", reopened.merchant)
+        assertEquals("蜜雪冰城928085店", reopened.note)
+        assertEquals(1, dao.getAllAutoBookkeepingEvents().size)
+    }
+
+    /** 验证已入账账单再次识别时返回已确认事件，以便通知提示而不重复落库。 */
+    @Test
+    fun confirmedAutoBookkeepingCaptureReturnsRecordedEvent() = runBlocking {
+        repository.initialize()
+        repository.updateAutoBookkeepingEnabled(true)
+        val event = requireNotNull(
+            repository.captureAutoBookkeeping(
+                AutoBookkeepingCapture(
+                    provider = PaymentProvider.WECHAT,
+                    source = AutoCaptureSource.XPOSED,
+                    type = TransactionType.EXPENSE,
+                    amountMinor = 700,
+                    merchant = "蜜雪冰城",
+                    occurredAt = 100_000,
+                    externalKeyHash = "confirmed_hash",
+                ),
+            ),
+        )
+        val account = dao.observeAccounts().first().single()
+        val category = dao.observeCategories().first().first { it.type == TransactionType.EXPENSE }
+        repository.confirmAutoBookkeepingEvent(
+            event.id,
+            TransactionDraft(
+                type = TransactionType.EXPENSE,
+                amountMinor = 700,
+                accountId = account.id,
+                categoryId = category.id,
+                merchant = "蜜雪冰城",
+                note = "",
+                occurredAt = 100_000,
+                source = TransactionSource.AI,
+            ),
+        )
+
+        val recorded = repository.captureAutoBookkeeping(
+            AutoBookkeepingCapture(
+                provider = PaymentProvider.WECHAT,
+                source = AutoCaptureSource.XPOSED,
+                type = TransactionType.EXPENSE,
+                amountMinor = 700,
+                merchant = "蜜雪冰城",
+                occurredAt = 100_000,
+                externalKeyHash = "confirmed_hash",
+            ),
+        )
+
+        assertEquals(event.id, recorded?.id)
+        assertEquals(AutoBookkeepingStatus.CONFIRMED, recorded?.status)
+        assertEquals(1, dao.getAllAutoBookkeepingEvents().size)
+        assertEquals(1, dao.getAllTransactions().size)
     }
 
 }

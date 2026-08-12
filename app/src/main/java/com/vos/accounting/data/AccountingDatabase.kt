@@ -920,6 +920,10 @@ interface AccountingDao {
     @Query("SELECT * FROM auto_rule_packs ORDER BY imported_at, id")
     suspend fun getAllAutoRulePacks(): List<AutoRulePackEntity>
 
+    /** 持续返回全部用户导入规则包供管理页面展示。 */
+    @Query("SELECT * FROM auto_rule_packs ORDER BY imported_at DESC, id DESC")
+    fun observeAutoRulePacks(): Flow<List<AutoRulePackEntity>>
+
     /** 返回当前激活的用户导入规则包。 */
     @Query("SELECT * FROM auto_rule_packs WHERE is_active = 1 ORDER BY imported_at DESC, id DESC")
     suspend fun getActiveAutoRulePacks(): List<AutoRulePackEntity>
@@ -942,6 +946,10 @@ interface AccountingDao {
     /** 删除全部用户导入规则并恢复仅使用内置规则。 */
     @Query("DELETE FROM auto_rule_packs")
     suspend fun deleteAllAutoRulePacks()
+
+    /** 删除指定标识的全部用户规则包版本。 */
+    @Query("DELETE FROM auto_rule_packs WHERE pack_id = :packId")
+    suspend fun deleteAutoRulePack(packId: String): Int
 
     /** 写入或替换 Hook 心跳。 */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -1580,10 +1588,6 @@ interface AccountingDao {
         """,
     )
     suspend fun ignoreAutoBookkeepingEvent(eventId: Long, updatedAt: Long): Int
-
-    /** 删除超过保留期限且已经处理的自动账单事件。 */
-    @Query("DELETE FROM auto_bookkeeping_events WHERE status != 'PENDING' AND updated_at < :threshold")
-    suspend fun deleteProcessedAutoBookkeepingEventsBefore(threshold: Long): Int
 
     /** 返回指定商户已经确认的分类映射。 */
     @Query(

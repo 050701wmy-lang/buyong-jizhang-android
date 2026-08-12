@@ -99,10 +99,29 @@ class WechatHookParserTest {
         )
     }
 
-    /** XWeb 列表 DOM 缺少完整详情标签时不应生成账单。 */
+    /** XWeb 商户主页内嵌详情应取金额后的对象，不把页签标题当成对象。 */
+    @Test
+    fun parseXWebDomMerchantAfterAmount() {
+        val dom = Json.encodeToString(
+            "蜜雪冰城\n等328万人喜欢\n小程序\n畅饮一杯\n服务\n会员\n交易详情\n−6.80\n蜜雪冰城\n" +
+                "当前状态\n支付成功\n支付时间\n2026年06月12日 20:37:16\n商品\n蜜雪冰城928085店\n" +
+                "商户全称\n蜜雪冰城股份有限公司\n支付方式\n零钱\n交易单号\nwx_order_5",
+        )
+
+        val capture = parser.parseXWebDom(dom)
+
+        assertEquals("蜜雪冰城", capture?.merchant)
+        assertEquals("蜜雪冰城928085店", capture?.note)
+    }
+
+    /** XWeb 列表 DOM 即使混有其他卡片的详情字段也不应生成账单。 */
     @Test
     fun rejectXWebListDom() {
-        val dom = Json.encodeToString("8月11日\n测试商户\n-18.00\n支付成功")
+        val dom = Json.encodeToString(
+            "4月30日 11:50\n五味佳餐馆 | 紫金店\n使用零钱支付\n¥10.00\n交易状态\n" +
+                "支付成功，对方已收款\n查看账单详情\n支付时间\n2026年4月30日 11:50:00\n" +
+                "交易单号\nlist_order_1",
+        )
 
         assertNull(parser.parseXWebDom(dom))
     }

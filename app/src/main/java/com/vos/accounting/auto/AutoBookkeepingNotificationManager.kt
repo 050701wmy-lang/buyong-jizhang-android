@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import com.vos.accounting.MainActivity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.AutoBookkeepingNotificationData
+import com.vos.accounting.model.AutoBookkeepingStatus
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
@@ -66,15 +67,29 @@ class AutoBookkeepingNotificationManager(
     ): Notification {
         val event = data.event
         val generic = privacyMode == NotificationPrivacyMode.HIDE_DETAILS
+        val recorded = event.status == AutoBookkeepingStatus.CONFIRMED
         val builder = Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setCategory(Notification.CATEGORY_STATUS)
             .setOnlyAlertOnce(true)
-            .setAutoCancel(false)
-            .setContentTitle(if (generic) "检测到一笔待确认账单" else notificationTitle(data))
-            .setContentText(if (generic) "点击查看并编辑" else notificationText(data))
-            .setContentIntent(editPendingIntent(event.id))
-            .addAction(
+            .setAutoCancel(recorded)
+            .setContentTitle(
+                when {
+                    recorded && generic -> "检测到一笔已记录账单"
+                    recorded -> "已记录 · ${notificationTitle(data)}"
+                    generic -> "检测到一笔待确认账单"
+                    else -> notificationTitle(data)
+                },
+            )
+            .setContentText(
+                when {
+                    recorded && generic -> "无需重复入账"
+                    generic -> "点击查看并编辑"
+                    else -> notificationText(data)
+                },
+            )
+        if (!recorded) {
+            builder.setContentIntent(editPendingIntent(event.id)).addAction(
                 Notification.Action.Builder(
                     null,
                     "编辑",
@@ -88,14 +103,15 @@ class AutoBookkeepingNotificationManager(
                     actionPendingIntent(ACTION_IGNORE_AUTO_BOOKKEEPING, event.id, 2),
                 ).build(),
             )
-        if (event.canConfirm) {
-            builder.addAction(
-                Notification.Action.Builder(
-                    null,
-                    "确认入账",
-                    actionPendingIntent(ACTION_CONFIRM_AUTO_BOOKKEEPING, event.id, 1),
-                ).build(),
-            )
+            if (event.canConfirm) {
+                builder.addAction(
+                    Notification.Action.Builder(
+                        null,
+                        "确认入账",
+                        actionPendingIntent(ACTION_CONFIRM_AUTO_BOOKKEEPING, event.id, 1),
+                    ).build(),
+                )
+            }
         }
         when (privacyMode) {
             NotificationPrivacyMode.SHOW_DETAILS -> builder.setVisibility(Notification.VISIBILITY_PUBLIC)
@@ -105,7 +121,7 @@ class AutoBookkeepingNotificationManager(
                 builder.setPublicVersion(
                     Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
-                        .setContentTitle("检测到一笔待确认账单")
+                        .setContentTitle(if (recorded) "检测到一笔已记录账单" else "检测到一笔待确认账单")
                         .setContentText("解锁后查看详情")
                         .build(),
                 )

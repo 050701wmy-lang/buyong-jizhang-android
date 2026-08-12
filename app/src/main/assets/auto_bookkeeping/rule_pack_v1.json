@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "pack_id": "builtin.cn.payment",
-  "pack_version": 1,
+  "pack_version": 2,
   "rules": [
     {
       "id": "wechat.expense.result",
@@ -10,7 +10,7 @@
       "priority": 100,
       "package_names": ["com.tencent.mm"],
       "required_any_keywords": ["支付成功", "付款成功", "已支付", "成功付款", "扣款成功", "消费成功", "转账成功", "转账完成"],
-      "excluded_keywords": ["支付失败", "付款失败", "交易关闭", "已取消"],
+      "excluded_keywords": ["支付失败", "付款失败", "交易关闭", "已取消", "查看账单详情"],
       "type": "EXPENSE",
       "fields": {
         "amount": [
@@ -30,7 +30,7 @@
       "priority": 110,
       "package_names": ["com.tencent.mm"],
       "required_any_keywords": ["收款成功", "已收款", "收款到账", "退款成功", "退款到账", "已退款"],
-      "excluded_keywords": ["退款失败", "收款失败"],
+      "excluded_keywords": ["退款失败", "收款失败", "对方已收款", "查看账单详情"],
       "type": "INCOME",
       "fields": {
         "amount": [
@@ -40,6 +40,30 @@
         "merchant": [{"kind": "LABEL", "labels": ["商户", "退款商户", "付款方", "收款人", "交易对象", "商品"]}],
         "payment_method": [{"kind": "LABEL", "labels": ["退款方式", "入账方式", "收款方式", "退款账户"]}],
         "external_key": [{"kind": "LABEL", "labels": ["交易单号", "订单号", "商户单号", "交易流水号"]}],
+        "currency": [{"kind": "CONSTANT", "value": "cny"}]
+      }
+    },
+    {
+      "id": "alipay.expense.detail",
+      "provider": "ALIPAY",
+      "sources": ["ACCESSIBILITY"],
+      "priority": 120,
+      "package_names": ["com.eg.android.AlipayGphone"],
+      "required_keywords": ["账单详情", "交易成功", "支付时间", "交易详情"],
+      "excluded_keywords": ["支付失败", "付款失败", "交易关闭", "已取消"],
+      "type": "EXPENSE",
+      "fields": {
+        "amount": [
+          {"kind": "REGEX", "pattern": "(?:¥|￥|人民币|CNY\\s*)\\s*([0-9][0-9,]*(?:\\.[0-9]{1,2})?)", "group": 1, "normalizations": ["TRIM", "REMOVE_COMMAS"]},
+          {"kind": "REGEX", "pattern": "([0-9][0-9,]*(?:\\.[0-9]{1,2})?)\\s*元", "group": 1, "normalizations": ["TRIM", "REMOVE_COMMAS"]}
+        ],
+        "merchant": [
+          {"kind": "REGEX", "pattern": "([^\\n]{1,80})\\n支出\\s*[0-9][0-9,]*(?:\\.[0-9]{1,2})?元", "group": 1, "normalizations": ["TRIM"]},
+          {"kind": "LABEL", "labels": ["商户", "收款方", "付款给", "收款人", "交易对象", "商品", "收款方全称"]}
+        ],
+        "payment_method": [{"kind": "LABEL", "labels": ["付款方式", "支付方式", "扣款方式", "付款账户", "转出账户"]}],
+        "external_key": [{"kind": "LABEL", "labels": ["交易详情", "交易单号", "订单号", "商户单号", "交易流水号"]}],
+        "occurred_at": [{"kind": "LABEL", "labels": ["支付时间", "付款时间", "交易时间"]}],
         "currency": [{"kind": "CONSTANT", "value": "cny"}]
       }
     },

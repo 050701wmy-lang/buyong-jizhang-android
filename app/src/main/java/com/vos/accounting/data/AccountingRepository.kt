@@ -54,6 +54,7 @@ class AccountingRepository(
     val settings = dao.observeSettings()
     val pendingAutoBookkeepingEvents = dao.observePendingAutoBookkeepingEvents()
     val autoHookHeartbeats = dao.observeAutoHookHeartbeats()
+    val autoRulePacks = dao.observeAutoRulePacks()
     private val currentLedgerId: Flow<Long> = settings
         .map { it?.currentLedgerId ?: 1L }
         .distinctUntilChanged()
@@ -76,9 +77,6 @@ class AccountingRepository(
      */
     suspend fun initialize() {
         dao.seedDefaults()
-        dao.deleteProcessedAutoBookkeepingEventsBefore(
-            System.currentTimeMillis() - AUTO_EVENT_RETENTION_MILLIS,
-        )
     }
 
     /**
@@ -182,6 +180,12 @@ class AccountingRepository(
     /** 清空用户导入规则并恢复内置规则。 */
     suspend fun restoreBuiltinAutoRules() = dao.deleteAllAutoRulePacks()
 
+    /** 停用指定标识的用户规则包。 */
+    suspend fun deactivateAutoRulePack(packId: String) = dao.deactivateAutoRulePack(packId)
+
+    /** 删除指定标识的全部用户规则包版本。 */
+    suspend fun deleteAutoRulePack(packId: String) = dao.deleteAutoRulePack(packId)
+
     /** 保存由 Android Keystore 加密后的私有 AI 凭据。 */
     suspend fun upsertAutoAiCredential(credential: AutoAiCredentialEntity) = dao.upsertAutoAiCredential(credential)
 
@@ -206,12 +210,9 @@ class AccountingRepository(
     suspend fun captureAutoBookkeeping(capture: AutoBookkeepingCapture): AutoBookkeepingEventEntity? {
         val settings = dao.getSettings() ?: AppSettingsEntity()
         if (!settings.autoBookkeepingEnabled || !settings.isProviderEnabled(capture.provider)) return null
-        dao.deleteProcessedAutoBookkeepingEventsBefore(
-            System.currentTimeMillis() - AUTO_EVENT_RETENTION_MILLIS,
-        )
         val merchantKey = normalizeAutoKey(capture.merchant)
         val paymentMethodKey = normalizeAutoKey(capture.paymentMethodKey)
-        val existing = capture.externalKeyHash?.let { hash ->
+        val matchedEvent = capture.externalKeyHash?.let { hash ->
             dao.findAutoBookkeepingEventByExternalKey(hash)
         }
             ?: dao.findAutoBookkeepingMergeCandidates(
@@ -225,7 +226,8 @@ class AccountingRepository(
                 autoKeysCompatible(normalizeAutoKey(candidate.merchant), merchantKey) &&
                     autoKeysCompatible(candidate.paymentMethodKey, paymentMethodKey)
             }
-        if (existing != null && existing.status != AutoBookkeepingStatus.PENDING) return null
+        if (matchedEvent?.status == AutoBookkeepingStatus.CONFIRMED) return matchedEvent
+        val existing = matchedEvent?.takeIf { event -> event.status == AutoBookkeepingStatus.PENDING }
         val eventLedgerId = existing?.ledgerId ?: settings.currentLedgerId
         val existingProvenance = existing?.fieldProvenanceJson?.let(::decodeAutoProvenance).orEmpty()
         val incomingProvenance = capture.fieldProvenance.toMutableMap().apply {
@@ -300,7 +302,7 @@ class AccountingRepository(
         val incomingRuleHasPriority = existing == null || existing.ruleId == null ||
             autoSourcePriority(capture.source) > autoSourcePriority(defaultExistingSource)
         val event = AutoBookkeepingEventEntity(
-            id = existing?.id ?: 0,
+            id = matchedEvent?.id ?: 0,
             provider = capture.provider,
             status = AutoBookkeepingStatus.PENDING,
             type = mergedType,
@@ -331,7 +333,7 @@ class AccountingRepository(
             hasConflict = hasConflict,
             aiAssisted = aiAssisted,
         )
-        if (existing != null) {
+        if (matchedEvent != null) {
             dao.updateAutoBookkeepingEvent(event)
             return event
         }
@@ -986,7 +988,6 @@ class AccountingRepository(
     }
 }
 
-private const val AUTO_EVENT_RETENTION_MILLIS = 90L * 24 * 60 * 60 * 1000
 private const val AUTO_DUPLICATE_WINDOW_MILLIS = 3L * 60 * 1000
 private const val AUTO_FIELD_TYPE = "type"
 private const val AUTO_FIELD_AMOUNT = "amount"

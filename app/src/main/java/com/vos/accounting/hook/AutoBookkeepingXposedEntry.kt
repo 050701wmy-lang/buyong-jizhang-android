@@ -27,6 +27,7 @@ import com.vos.accounting.model.TransactionType
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
+import java.lang.reflect.Proxy
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.util.ArrayDeque
@@ -37,10 +38,17 @@ import kotlinx.serialization.json.Json
 class AutoBookkeepingXposedEntry : XposedModule() {
     private val json = Json { encodeDefaults = true; explicitNulls = false }
     private val wechatParser = WechatHookParser()
+    private val alipayParser = AlipayHookParser()
     private val wechatKindaCache = WechatKindaFieldCache()
     private val wechatDomHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val alipayDomHandler by lazy { Handler(Looper.getMainLooper()) }
     private val pendingWechatDomProbes = mutableMapOf<Any, Runnable>()
+    private val pendingAlipayDomProbes = mutableMapOf<Any, Runnable>()
     private val observedWechatWebViews = WeakHashMap<Any, Boolean>()
+    private val observedAlipayClientClasses = mutableSetOf<Class<*>>()
+    private val alipayDomDiagnosticStages = mutableSetOf<String>()
+    private var lastAlipayFingerprint = ""
+    private var lastAlipaySubmittedAt = 0L
     private var loadedProcess = ""
     private var applicationHookInstalled = false
 
@@ -122,14 +130,430 @@ class AutoBookkeepingXposedEntry : XposedModule() {
             installWechatXWebAdapter(context, targetClassLoader, version)
             installWechatWcdbAdapter(context, targetClassLoader, version)
             installWechatKindaCache(targetClassLoader)
+        } else {
+            installAlipayAdapters(context, targetClassLoader, version)
         }
-        installTextResultAdapter(context, provider, version, adapterId)
         log(
             Log.INFO,
             HOOK_LOG_TAG,
             "event=adapter_ready package=${context.packageName} process=$loadedProcess " +
                 "version=$version adapter=$adapterId",
         )
+    }
+
+    /** 按支付宝实际进程职责安装同步消息、账单 WebView 和文本降级 Hook。 */
+    private fun installAlipayAdapters(
+        context: Context,
+        targetClassLoader: ClassLoader,
+        version: String,
+    ) {
+        when (loadedProcess) {
+            ALIPAY_PACKAGE_NAME -> {
+                installAlipaySyncAdapter(context, targetClassLoader, version)
+                installAlipayWebViewAdapters(context, targetClassLoader, version)
+                installTextResultAdapter(context, PaymentProvider.ALIPAY, version, ALIPAY_TEXT_ADAPTER_ID)
+            }
+
+            "$ALIPAY_PACKAGE_NAME:push" -> installAlipaySyncAdapter(context, targetClassLoader, version)
+            "$ALIPAY_PACKAGE_NAME:tools" -> {
+                installAlipayWebViewAdapters(context, targetClassLoader, version)
+                installTextResultAdapter(context, PaymentProvider.ALIPAY, version, ALIPAY_TEXT_ADAPTER_ID)
+            }
+
+            else -> log(
+                Log.INFO,
+                HOOK_LOG_TAG,
+                "event=route_skip process=$loadedProcess provider=ALIPAY reason=process_mismatch",
+            )
+        }
+    }
+
+    /** Hook 支付宝同步消息并在进程内解析有限交易字段。 */
+    private fun installAlipaySyncAdapter(
+        context: Context,
+        targetClassLoader: ClassLoader,
+        version: String,
+    ) {
+        try {
+            val messageClass = Class.forName(ALIPAY_SYNC_MESSAGE_CLASS_NAME, false, targetClassLoader)
+            val getData = messageClass.getDeclaredMethod("getData")
+            val messageData = messageClass.getField("msgData")
+            hook(getData)
+                .setId(ALIPAY_SYNC_GET_DATA_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    (result as? String)?.let { raw -> submitAlipaySync(context, version, raw) }
+                    result
+                }
+            val toStringMethod = messageClass.getDeclaredMethod("toString")
+            hook(toStringMethod)
+                .setId(ALIPAY_SYNC_TO_STRING_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    val raw = chain.getThisObject()?.let { message ->
+                        runCatching { messageData.get(message) as? String }.getOrNull()
+                    }
+                    raw?.let { value -> submitAlipaySync(context, version, value) }
+                    result
+                }
+            log(Log.INFO, HOOK_LOG_TAG, "event=hook_registered process=$loadedProcess channel=alipay_sync")
+        } catch (error: Throwable) {
+            logHookUnavailable("alipay_sync", error)
+        }
+    }
+
+    /** 解析支付宝同步消息并提交十秒内未重复的结构化账单。 */
+    private fun submitAlipaySync(context: Context, version: String, raw: String) {
+        val capture = runCatching { alipayParser.parseSync(raw) }.getOrNull() ?: return
+        if (!shouldSubmitAlipay(capture)) return
+        submitAlipayCapture(context, version, ALIPAY_SYNC_ADAPTER_ID, capture)
+        log(Log.INFO, HOOK_LOG_TAG, "event=hook_hit process=$loadedProcess channel=alipay_sync")
+    }
+
+    /** 同时安装支付宝旧 H5 与新版 MyWeb 账单详情适配器。 */
+    private fun installAlipayWebViewAdapters(
+        context: Context,
+        targetClassLoader: ClassLoader,
+        version: String,
+    ) {
+        installAlipayLegacyWebViewAdapter(context, targetClassLoader, version)
+        installAlipayMyWebViewAdapter(context, targetClassLoader, version)
+    }
+
+    /** Hook 支付宝旧 H5 账单页完成与页面出现信号。 */
+    private fun installAlipayLegacyWebViewAdapter(
+        context: Context,
+        targetClassLoader: ClassLoader,
+        version: String,
+    ) {
+        try {
+            val webViewClass = Class.forName(ALIPAY_H5_WEB_VIEW_CLASS_NAME, false, targetClassLoader)
+            val evaluateJavascript = webViewClass.getDeclaredMethod(
+                "evaluateJavascript",
+                String::class.java,
+                ValueCallback::class.java,
+            )
+            val pageFinished = webViewClass.getDeclaredMethod("onPageFinished", String::class.java)
+            hook(pageFinished)
+                .setId(ALIPAY_H5_PAGE_FINISHED_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    val webView = chain.getThisObject()
+                    val url = chain.getArg(0) as? String
+                    if (webView != null && isAlipayBillUrl(url)) {
+                        scheduleAlipayDomProbe(webView) {
+                            probeAlipayDom(context, version, "alipay_h5", ALIPAY_H5_ADAPTER_ID) { onText ->
+                                readWebDom(webView, evaluateJavascript, "alipay_h5", onText)
+                            }
+                        }
+                    }
+                    result
+                }
+            hook(evaluateJavascript)
+                .setId(ALIPAY_H5_EVALUATE_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    val webView = chain.getThisObject()
+                    val script = chain.getArg(0) as? String
+                    if (webView != null && script?.contains(ALIPAY_PAGE_APPEARED_MARKER) == true) {
+                        scheduleAlipayDomProbe(webView) {
+                            probeAlipayDom(context, version, "alipay_h5", ALIPAY_H5_ADAPTER_ID) { onText ->
+                                readWebDom(webView, evaluateJavascript, "alipay_h5", onText)
+                            }
+                        }
+                    }
+                    result
+                }
+            log(Log.INFO, HOOK_LOG_TAG, "event=hook_registered process=$loadedProcess channel=alipay_h5")
+        } catch (error: Throwable) {
+            logHookUnavailable("alipay_h5", error)
+        }
+    }
+
+    /** Hook 支付宝 XRiver 使用的 MyWeb，并在页面加载信号后读取稳定 DOM。 */
+    private fun installAlipayMyWebViewAdapter(
+        context: Context,
+        targetClassLoader: ClassLoader,
+        version: String,
+    ) {
+        try {
+            val webViewClass = Class.forName(ALIPAY_MY_WEB_VIEW_CLASS_NAME, false, targetClassLoader)
+            val valueCallbackClass = Class.forName(ALIPAY_MY_WEB_VALUE_CALLBACK_CLASS_NAME, false, targetClassLoader)
+            val webViewClientClass = Class.forName(ALIPAY_MY_WEB_CLIENT_CLASS_NAME, false, targetClassLoader)
+            val evaluateJavascript = webViewClass.getDeclaredMethod(
+                "evaluateJavascript",
+                String::class.java,
+                valueCallbackClass,
+            )
+            val scheduleProbe = { webView: Any ->
+                scheduleAlipayDomProbe(webView) {
+                    probeAlipayDom(context, version, "alipay_myweb", ALIPAY_MY_WEB_ADAPTER_ID) { onText ->
+                        readAlipayMyWebDom(webView, evaluateJavascript, valueCallbackClass, onText)
+                    }
+                }
+            }
+            installAlipayMyWebLoadHook(
+                webViewClass.getDeclaredMethod("loadUrl", String::class.java),
+                ALIPAY_MY_WEB_LOAD_URL_HOOK_ID,
+                webViewClass,
+                scheduleProbe,
+            )
+            installAlipayMyWebLoadHook(
+                webViewClass.getDeclaredMethod("loadUrl", String::class.java, Map::class.java),
+                ALIPAY_MY_WEB_LOAD_URL_HEADERS_HOOK_ID,
+                webViewClass,
+                scheduleProbe,
+            )
+            hook(evaluateJavascript)
+                .setId(ALIPAY_MY_WEB_EVALUATE_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    val webView = chain.getThisObject()
+                    val script = chain.getArg(0) as? String
+                    if (
+                        webView != null &&
+                        webViewClass.isInstance(webView) &&
+                        script?.contains(ALIPAY_PAGE_APPEARED_MARKER) == true
+                    ) {
+                        scheduleProbe(webView)
+                    }
+                    result
+                }
+            val setWebViewClient = webViewClass.getDeclaredMethod("setWebViewClient", webViewClientClass)
+            hook(setWebViewClient)
+                .setId(ALIPAY_MY_WEB_CLIENT_HOOK_ID)
+                .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+                .intercept { chain ->
+                    val result = chain.proceed()
+                    val webView = chain.getThisObject()
+                    val webViewClient = chain.getArg(0)
+                    if (webView != null && webViewClass.isInstance(webView)) {
+                        scheduleProbe(webView)
+                    }
+                    if (webViewClient != null) {
+                        installAlipayMyWebPageFinishedHook(
+                            webViewClient.javaClass,
+                            webViewClass,
+                            scheduleProbe,
+                        )
+                    }
+                    result
+                }
+            log(Log.INFO, HOOK_LOG_TAG, "event=hook_registered process=$loadedProcess channel=alipay_myweb")
+        } catch (error: Throwable) {
+            logHookUnavailable("alipay_myweb", error)
+        }
+    }
+
+    /** Hook XRiver 实际 WebViewClient 的页面完成回调。 */
+    private fun installAlipayMyWebPageFinishedHook(
+        clientClass: Class<*>,
+        webViewClass: Class<*>,
+        scheduleProbe: (Any) -> Unit,
+    ) {
+        if (!observedAlipayClientClasses.add(clientClass)) return
+        val pageFinished = clientClass.methods.firstOrNull { method ->
+            method.name == "onPageFinished" &&
+                method.parameterTypes.contentEquals(arrayOf(webViewClass, String::class.java))
+        } ?: run {
+            log(
+                Log.WARN,
+                HOOK_LOG_TAG,
+                "event=hook_unavailable process=$loadedProcess channel=alipay_myweb_page_finished " +
+                    "reason=method_not_found",
+            )
+            return
+        }
+        hook(pageFinished)
+            .setId("$ALIPAY_MY_WEB_PAGE_FINISHED_HOOK_ID-${sha256Hook(clientClass.name).take(8)}")
+            .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+            .intercept { chain ->
+                val result = chain.proceed()
+                val webView = chain.getArg(0)
+                if (webView != null && webViewClass.isInstance(webView)) scheduleProbe(webView)
+                result
+            }
+        log(
+            Log.INFO,
+            HOOK_LOG_TAG,
+            "event=hook_registered process=$loadedProcess channel=alipay_myweb_page_finished",
+        )
+    }
+
+    /** Hook 一个 MyWeb 加载入口，并在原调用完成后安排详情页读取。 */
+    private fun installAlipayMyWebLoadHook(
+        method: java.lang.reflect.Method,
+        hookId: String,
+        webViewClass: Class<*>,
+        scheduleProbe: (Any) -> Unit,
+    ) {
+        hook(method)
+            .setId(hookId)
+            .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+            .intercept { chain ->
+                val result = chain.proceed()
+                val webView = chain.getThisObject()
+                if (webView != null && webViewClass.isInstance(webView)) scheduleProbe(webView)
+                result
+            }
+    }
+
+    /** 合并支付宝账单页的连续加载信号，并延迟到页面稳定后识别。 */
+    private fun scheduleAlipayDomProbe(
+        webView: Any,
+        probeDom: () -> Unit,
+    ) {
+        alipayDomHandler.post {
+            if (pendingAlipayDomProbes.containsKey(webView)) return@post
+            val probe = Runnable {
+                pendingAlipayDomProbes.remove(webView)
+                probeDom()
+            }
+            pendingAlipayDomProbes[webView] = probe
+            alipayDomHandler.postDelayed(probe, ALIPAY_DOM_DEBOUNCE_MILLIS)
+        }
+    }
+
+    /** 连续读取两次支付宝 DOM，只提交内容一致且完整的账单。 */
+    private fun probeAlipayDom(
+        context: Context,
+        version: String,
+        channel: String,
+        adapterId: String,
+        attempt: Int = 1,
+        readDom: ((String) -> Unit) -> Unit,
+    ) {
+        val retry = {
+            if (attempt < ALIPAY_DOM_MAX_ATTEMPTS) {
+                alipayDomHandler.postDelayed({
+                    probeAlipayDom(context, version, channel, adapterId, attempt + 1, readDom)
+                }, ALIPAY_DOM_RETRY_MILLIS)
+            }
+        }
+        readDom { firstText ->
+            val firstCapture = runCatching { alipayParser.parseDom(firstText) }.getOrNull()
+            if (firstCapture == null) {
+                logAlipayDomDiagnostic("first_parse_rejected_$attempt", firstText.length)
+                retry()
+                return@readDom
+            }
+            alipayDomHandler.postDelayed({
+                readDom { secondText ->
+                    val secondCapture = runCatching { alipayParser.parseDom(secondText) }.getOrNull()
+                    if (secondCapture == null) {
+                        logAlipayDomDiagnostic("second_parse_rejected_$attempt", secondText.length)
+                        retry()
+                        return@readDom
+                    }
+                    if (firstCapture != secondCapture) {
+                        logAlipayDomDiagnostic("fields_unstable_$attempt", secondText.length)
+                        retry()
+                        return@readDom
+                    }
+                    if (shouldSubmitAlipay(secondCapture)) {
+                        submitAlipayCapture(context, version, adapterId, secondCapture)
+                        log(Log.INFO, HOOK_LOG_TAG, "event=hook_hit process=$loadedProcess channel=$channel")
+                    }
+                }
+            }, ALIPAY_DOM_STABILITY_MILLIS)
+        }
+    }
+
+    /** 读取一次 WebView 内存 DOM 文本，不持久化页面原文。 */
+    private fun readWebDom(
+        webView: Any,
+        evaluateJavascript: java.lang.reflect.Method,
+        channel: String,
+        onText: (String) -> Unit,
+    ) {
+        val callback = ValueCallback<String> { encodedText -> encodedText?.let(onText) }
+        runCatching {
+            evaluateJavascript.invoke(webView, WEB_DOM_TEXT_SCRIPT, callback)
+        }.onFailure { error ->
+            log(Log.WARN, HOOK_LOG_TAG, "event=hook_failed process=$loadedProcess channel=$channel", error)
+        }
+    }
+
+    /** 使用 MyWeb 自有回调接口读取一次内存 DOM 文本。 */
+    private fun readAlipayMyWebDom(
+        webView: Any,
+        evaluateJavascript: java.lang.reflect.Method,
+        valueCallbackClass: Class<*>,
+        onText: (String) -> Unit,
+    ) {
+        val callback = Proxy.newProxyInstance(
+            valueCallbackClass.classLoader,
+            arrayOf(valueCallbackClass),
+        ) { _, method, arguments ->
+            if (method.name == "onReceiveValue") {
+                val value = arguments?.firstOrNull()
+                val text = value as? String ?: value?.toString()
+                logAlipayDomDiagnostic("callback", text?.length ?: 0)
+                text?.let(onText)
+            }
+            null
+        }
+        runCatching {
+            evaluateJavascript.invoke(webView, WEB_DOM_TEXT_SCRIPT, callback)
+        }.onFailure { error ->
+            log(Log.WARN, HOOK_LOG_TAG, "event=hook_failed process=$loadedProcess channel=alipay_myweb", error)
+        }
+    }
+
+    /** 每个 MyWeb DOM 诊断阶段仅记录一次非敏感元数据。 */
+    @Synchronized
+    private fun logAlipayDomDiagnostic(stage: String, textLength: Int) {
+        if (!alipayDomDiagnosticStages.add(stage)) return
+        log(
+            Log.INFO,
+            HOOK_LOG_TAG,
+            "event=hook_signal process=$loadedProcess channel=alipay_myweb stage=$stage length=$textLength",
+        )
+    }
+
+    /** 提交支付宝结构化账单字段，不向宿主传递同步消息或页面原文。 */
+    private fun submitAlipayCapture(
+        context: Context,
+        version: String,
+        adapterId: String,
+        capture: AlipayParsedCapture,
+    ) {
+        submitHookCapture(
+            context,
+            HookCapturePayload(
+                kind = HookPayloadKind.CAPTURE,
+                provider = PaymentProvider.ALIPAY,
+                packageName = context.packageName,
+                appVersion = version,
+                adapterId = adapterId,
+                adapterStatus = HOOK_STATUS_ACTIVE,
+                type = capture.type,
+                amount = capture.amount,
+                merchant = capture.merchant,
+                note = capture.note,
+                paymentMethod = capture.paymentMethod,
+                externalTransactionId = capture.externalTransactionId,
+                occurredAt = capture.occurredAt,
+            ),
+        )
+    }
+
+    /** 对同一支付宝进程十秒内的相同结构化结果进行内存去重。 */
+    @Synchronized
+    private fun shouldSubmitAlipay(capture: AlipayParsedCapture): Boolean {
+        val fingerprint = sha256Hook(
+            "${capture.type}|${capture.amount}|${capture.merchant}|${capture.externalTransactionId.orEmpty()}",
+        )
+        val now = SystemClock.elapsedRealtime()
+        if (fingerprint == lastAlipayFingerprint && now - lastAlipaySubmittedAt < HOOK_SUBMIT_TTL_MILLIS) return false
+        lastAlipayFingerprint = fingerprint
+        lastAlipaySubmittedAt = now
+        return true
     }
 
     /** Hook 微信 XWeb 支付回调并提交已解析的结构化账单。 */
@@ -292,14 +716,7 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         webView: Any,
         evaluateJavascript: java.lang.reflect.Method,
         onText: (String) -> Unit,
-    ) {
-        val callback = ValueCallback<String> { encodedText -> encodedText?.let(onText) }
-        runCatching {
-            evaluateJavascript.invoke(webView, WECHAT_DOM_TEXT_SCRIPT, callback)
-        }.onFailure { error ->
-            log(Log.WARN, HOOK_LOG_TAG, "event=hook_failed process=$loadedProcess channel=xweb_dom", error)
-        }
-    }
+    ) = readWebDom(webView, evaluateJavascript, "xweb_dom", onText)
 
     /** Hook 微信 WCDB 插入并仅检查支付消息需要的有限字段。 */
     private fun installWechatWcdbAdapter(
@@ -543,9 +960,14 @@ private fun findKindaMerchant(text: String): String? {
 /** 返回与应用版本无关的受限文本收集器标识。 */
 private fun adapterId(provider: PaymentProvider): String? = when (provider) {
     PaymentProvider.WECHAT -> "wechat_multi_source_v2"
-    PaymentProvider.ALIPAY -> "alipay_text_result_v1"
+    PaymentProvider.ALIPAY -> ALIPAY_TEXT_ADAPTER_ID
     PaymentProvider.UNIONPAY -> null
 }
+
+/** 判断 H5 地址是否属于带交易号的支付宝账单详情。 */
+private fun isAlipayBillUrl(url: String?): Boolean = url?.let { value ->
+    value.contains("tradeNo=", ignoreCase = true) || value.contains("trade_no=", ignoreCase = true)
+} == true
 
 /** 在内存中短暂聚合结果页 TextView，并提交一次结构化账单。 */
 private class HookTextCollector(
@@ -654,6 +1076,12 @@ private const val ALIPAY_PACKAGE_NAME = "com.eg.android.AlipayGphone"
 private const val WECHAT_XWEB_CLASS_NAME = "com.tencent.xweb.WebView"
 private const val WECHAT_WCDB_CLASS_NAME = "com.tencent.wcdb.database.SQLiteDatabase"
 private const val WECHAT_KINDA_CLASS_NAME = "com.tencent.kinda.framework.widget.base.MMKRichText"
+private const val ALIPAY_SYNC_MESSAGE_CLASS_NAME =
+    "com.alipay.mobile.rome.longlinkservice.syncmodel.SyncMessage"
+private const val ALIPAY_H5_WEB_VIEW_CLASS_NAME = "com.alipay.mobile.nebulacore.web.H5WebView"
+private const val ALIPAY_MY_WEB_VIEW_CLASS_NAME = "com.alipay.mywebview.sdk.WebView"
+private const val ALIPAY_MY_WEB_VALUE_CALLBACK_CLASS_NAME = "com.alipay.mywebview.sdk.ValueCallback"
+private const val ALIPAY_MY_WEB_CLIENT_CLASS_NAME = "com.alipay.mywebview.sdk.WebViewClient"
 private const val HOOK_LOG_TAG = "AccountingHook"
 private const val APPLICATION_ATTACH_HOOK_ID = "application_attach"
 private const val TEXT_VIEW_SET_TEXT_HOOK_ID = "text_view_set_text"
@@ -662,9 +1090,22 @@ private const val WECHAT_XWEB_CLIENT_HOOK_ID = "wechat_xweb_client"
 private const val WECHAT_XWEB_TOUCH_HOOK_ID = "wechat_xweb_touch"
 private const val WECHAT_WCDB_HOOK_ID = "wechat_wcdb_insert"
 private const val WECHAT_KINDA_HOOK_ID = "wechat_kinda_append_text"
+private const val ALIPAY_SYNC_GET_DATA_HOOK_ID = "alipay_sync_get_data"
+private const val ALIPAY_SYNC_TO_STRING_HOOK_ID = "alipay_sync_to_string"
+private const val ALIPAY_H5_PAGE_FINISHED_HOOK_ID = "alipay_h5_page_finished"
+private const val ALIPAY_H5_EVALUATE_HOOK_ID = "alipay_h5_evaluate_javascript"
+private const val ALIPAY_MY_WEB_LOAD_URL_HOOK_ID = "alipay_myweb_load_url"
+private const val ALIPAY_MY_WEB_LOAD_URL_HEADERS_HOOK_ID = "alipay_myweb_load_url_headers"
+private const val ALIPAY_MY_WEB_EVALUATE_HOOK_ID = "alipay_myweb_evaluate_javascript"
+private const val ALIPAY_MY_WEB_CLIENT_HOOK_ID = "alipay_myweb_client"
+private const val ALIPAY_MY_WEB_PAGE_FINISHED_HOOK_ID = "alipay_myweb_page_finished"
 private const val WECHAT_XWEB_ADAPTER_ID = "wechat_xweb_v1"
 private const val WECHAT_XWEB_DOM_ADAPTER_ID = "wechat_xweb_dom_v1"
 private const val WECHAT_WCDB_ADAPTER_ID = "wechat_wcdb_v1"
+private const val ALIPAY_TEXT_ADAPTER_ID = "alipay_text_result_v1"
+private const val ALIPAY_SYNC_ADAPTER_ID = "alipay_sync_message_v1"
+private const val ALIPAY_H5_ADAPTER_ID = "alipay_h5_dom_v1"
+private const val ALIPAY_MY_WEB_ADAPTER_ID = "alipay_myweb_dom_v1"
 private const val MAX_HOOK_PAYLOAD_BYTES = 64 * 1024
 private const val MAX_HOOK_TEXT_LENGTH = 256
 private const val MAX_WECHAT_MESSAGE_FIELD_LENGTH = 16 * 1024
@@ -676,7 +1117,12 @@ private const val HOOK_SUBMIT_TTL_MILLIS = 10_000L
 private const val WECHAT_KINDA_CACHE_MILLIS = 2 * 60 * 1_000L
 private const val WECHAT_DOM_DEBOUNCE_MILLIS = 500L
 private const val WECHAT_DOM_STABILITY_MILLIS = 250L
-private const val WECHAT_DOM_TEXT_SCRIPT = "(function(){return document.body?document.body.innerText:'';})()"
+private const val ALIPAY_DOM_DEBOUNCE_MILLIS = 500L
+private const val ALIPAY_DOM_STABILITY_MILLIS = 250L
+private const val ALIPAY_DOM_RETRY_MILLIS = 250L
+private const val ALIPAY_DOM_MAX_ATTEMPTS = 3
+private const val ALIPAY_PAGE_APPEARED_MARKER = "ALIPAYVIEWAPPEARED"
+private const val WEB_DOM_TEXT_SCRIPT = "(function(){return document.body?document.body.innerText:'';})()"
 private val WECHAT_XWEB_TOUCH_METHODS = setOf("onTouchEvent", "dispatchTouchEvent")
 private val WECHAT_MESSAGE_FIELD_NAMES = listOf("content", "description", "title", "xml", "extinfo", "reserved")
 private val WECHAT_PAYMENT_METHOD_HINTS = listOf("零钱", "零钱通", "银行卡", "信用卡", "储蓄卡", "经营账户")

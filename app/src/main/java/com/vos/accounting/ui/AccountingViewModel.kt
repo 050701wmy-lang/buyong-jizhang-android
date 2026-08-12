@@ -13,9 +13,11 @@ import com.vos.accounting.data.AccountTypeEntity
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.AutoBookkeepingEventEntity
 import com.vos.accounting.data.AutoHookHeartbeatEntity
+import com.vos.accounting.data.AutoRulePackEntity
 import com.vos.accounting.auto.AutoAiCredentialStore
 import com.vos.accounting.auto.AutoBookkeepingRuleEngine
 import com.vos.accounting.auto.PrivateAutoBookkeepingAiClient
+import com.vos.accounting.auto.RulePackV1
 import com.vos.accounting.auto.testRootScreenshotAccess
 import com.vos.accounting.data.CategoryEntity
 import com.vos.accounting.data.CurrencyEntity
@@ -101,6 +103,11 @@ class AccountingViewModel(
     private var pendingLedgerId: Long? = null
     private var pendingLedgerSelection: (() -> Unit)? = null
     private var ledgerSelectionJob: Job? = null
+    val autoRulePacks = repository.autoRulePacks.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = emptyList(),
+    )
 
     private val accountState = combine(
         repository.accounts,
@@ -311,6 +318,40 @@ class AccountingViewModel(
                 AutoBookkeepingRuleEngine(context.applicationContext, repository).importRulePack(bytes)
             },
             onSuccess = { onImported() },
+        )
+    }
+
+    /** 读取管理页面展示所需的内置规则包。 */
+    fun readBuiltinAutoRulePack(context: Context): RulePackV1? = runCatching {
+        AutoBookkeepingRuleEngine(context.applicationContext, repository).readBuiltinRulePack()
+    }.getOrNull()
+
+    /** 读取管理页面展示所需的用户规则包。 */
+    fun readStoredAutoRulePack(context: Context, entity: AutoRulePackEntity): RulePackV1? = runCatching {
+        AutoBookkeepingRuleEngine(context.applicationContext, repository).readStoredRulePack(entity)
+    }.getOrNull()
+
+    /** 启用或停用已经导入并通过校验的规则包。 */
+    fun updateAutoRulePackActive(
+        context: Context,
+        entity: AutoRulePackEntity,
+        active: Boolean,
+        onUpdated: () -> Unit = {},
+    ) {
+        launchWrite(
+            action = {
+                AutoBookkeepingRuleEngine(context.applicationContext, repository)
+                    .updateRulePackActive(entity, active)
+            },
+            onSuccess = { onUpdated() },
+        )
+    }
+
+    /** 删除指定标识的全部用户规则包版本。 */
+    fun deleteAutoRulePack(packId: String, onDeleted: () -> Unit = {}) {
+        launchWrite(
+            action = { repository.deleteAutoRulePack(packId) },
+            onSuccess = { onDeleted() },
         )
     }
 

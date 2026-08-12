@@ -60,7 +60,6 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowBottomSheet
 import top.yukonga.miuix.kmp.window.WindowDialog
-import com.vos.accounting.auto.MAX_RULE_PACK_BYTES
 import com.vos.accounting.auto.HOOK_STATUS_ACTIVE
 import java.math.BigDecimal
 import java.time.Instant
@@ -74,6 +73,7 @@ fun AutoBookkeepingSettingsScreen(
     uiState: AccountingUiState,
     backdrop: LayerBackdrop,
     onBack: () -> Unit,
+    onOpenRuleManagement: () -> Unit,
     viewModel: AccountingViewModel,
 ) {
     val context = LocalContext.current
@@ -94,25 +94,9 @@ fun AutoBookkeepingSettingsScreen(
     val accessibilityGranted = remember(permissionRefresh) { accessibilityServiceGranted(context) }
     var rootTestResult by rememberSaveable { mutableStateOf<String?>(null) }
     var aiTestResult by rememberSaveable { mutableStateOf<String?>(null) }
-    var ruleResult by rememberSaveable { mutableStateOf<String?>(null) }
     var showAiConfiguration by rememberSaveable { mutableStateOf(false) }
     var showOcrRisk by rememberSaveable { mutableStateOf(false) }
     var showVisionRisk by rememberSaveable { mutableStateOf(false) }
-    val ruleImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val bytes = uri?.let { selected ->
-            runCatching {
-                context.contentResolver.openInputStream(selected)?.use { input ->
-                    input.readNBytes(MAX_RULE_PACK_BYTES + 1)
-                }
-            }.getOrNull()
-        }
-        if (bytes == null) {
-            ruleResult = "未读取规则文件"
-        } else {
-            viewModel.importAutoRulePack(context, bytes) { ruleResult = "规则已导入并激活" }
-        }
-    }
-
     SecondaryScaffold(title = "AI 记账", backdrop = backdrop, onBack = onBack) { innerPadding ->
         SecondaryList(innerPadding) {
             item { SectionTitle("功能") }
@@ -236,17 +220,11 @@ fun AutoBookkeepingSettingsScreen(
                     insideMargin = PaddingValues(0.dp),
                 ) {
                     BasicComponent(
-                        title = "导入 RulePackV1",
-                        summary = ruleResult ?: "仅接受不超过 1MiB、通过 schema 与线性正则校验的 JSON",
+                        title = "规则管理",
+                        summary = "查看内置规则，导入、启停或删除用户规则包",
                         modifier = Modifier.fillMaxWidth(),
                         endActions = { PreferenceArrow() },
-                        onClick = { ruleImportLauncher.launch(arrayOf("application/json", "text/json")) },
-                    )
-                    BasicComponent(
-                        title = "恢复内置规则",
-                        summary = "删除全部用户导入规则",
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = { viewModel.restoreBuiltinAutoRules { ruleResult = "已恢复内置规则" } },
+                        onClick = onOpenRuleManagement,
                     )
                 }
             }

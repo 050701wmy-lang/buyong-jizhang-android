@@ -85,6 +85,7 @@ internal class WechatHookParser {
         val text = runCatching {
             (json.parseToJsonElement(encodedText) as? JsonPrimitive)?.contentOrNull
         }.getOrNull() ?: return null
+        if (text.contains(WECHAT_BILL_LIST_ACTION)) return null
         val status = findLabeledValue(text, WECHAT_STATUS_LABELS) ?: return null
         if (WECHAT_DETAIL_SUCCESS_KEYWORDS.none(status::contains)) return null
         val amountMatch = WECHAT_DOM_AMOUNT_PATTERN.find(text) ?: return null
@@ -96,11 +97,17 @@ internal class WechatHookParser {
         val amount = normalizeHookAmount(amountMatch.groupValues[2]) ?: return null
         val occurredAt = WECHAT_TIME_PATTERN.find(text)?.value?.let(::parseWechatTime) ?: return null
         val externalId = findLabeledValue(text, WECHAT_EXTERNAL_ID_LABELS) ?: return null
-        val merchant = text.substring(0, amountMatch.range.first)
+        val merchantAfterAmount = text.substring(amountMatch.range.last + 1)
+            .lineSequence()
+            .map(String::trim)
+            .firstOrNull(String::isNotEmpty)
+            ?.takeUnless(WECHAT_STATUS_LABELS::contains)
+        val merchantBeforeAmount = text.substring(0, amountMatch.range.first)
             .lineSequence()
             .map(String::trim)
             .lastOrNull(String::isNotEmpty)
-            ?: return null
+            ?.takeUnless { it == WECHAT_DETAIL_TAB_TITLE }
+        val merchant = merchantAfterAmount ?: merchantBeforeAmount ?: return null
         return WechatParsedCapture(
             type = type,
             amount = amount,
@@ -274,6 +281,8 @@ private val WECHAT_TIME_LABELS = listOf("支付时间", "交易时间", "收款�
 private val WECHAT_STATUS_LABELS = listOf("当前状态", "交易状态", "支付状态")
 private val WECHAT_PRODUCT_LABELS = listOf("商品")
 private val WECHAT_DETAIL_SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "收款成功", "交易成功", "已退款", "退款成功")
+private const val WECHAT_BILL_LIST_ACTION = "查看账单详情"
+private const val WECHAT_DETAIL_TAB_TITLE = "交易详情"
 private val WECHAT_MERCHANT_XML_TAGS = listOf("merchant_name", "payee_name", "receiver_name", "payer_name")
 private val WECHAT_PAYMENT_METHOD_XML_TAGS = listOf("payment_method", "pay_tool", "bank_name")
 private val WECHAT_EXTERNAL_ID_XML_TAGS = listOf("transaction_id", "trans_id", "order_id", "transferid")
