@@ -571,8 +571,6 @@ data class TransactionRecord(
     val accountCurrencyKey: String,
     @ColumnInfo(name = "account_currency_symbol")
     val accountCurrencySymbol: String,
-    @ColumnInfo(name = "currency_rate_to_cny_scaled")
-    val currencyRateToCnyScaled: Long,
     @ColumnInfo(name = "ledger_id")
     val ledgerId: Long,
     @ColumnInfo(name = "exchange_id")
@@ -637,7 +635,6 @@ private const val TRANSACTION_SELECT =
             transaction_currencies.symbol AS currency_symbol,
             accounts.currency_key AS account_currency_key,
             account_currencies.symbol AS account_currency_symbol,
-            transaction_currencies.rate_to_cny_scaled AS currency_rate_to_cny_scaled,
             transactions.exchange_id AS exchange_id,
             transactions.transfer_direction AS transfer_direction,
             transactions.refund_of_transaction_id AS refund_of_transaction_id,
@@ -688,12 +685,6 @@ interface AccountingDao {
      */
     @Query(TRANSACTION_SELECT + " WHERE transactions.ledger_id = :ledgerId\n        ORDER BY occurred_at DESC, transactions.id DESC")
     fun observeTransactions(ledgerId: Long): Flow<List<TransactionRecord>>
-
-    /**
-     * 持续观察跨全部账本的账目，用于计算账户全局资产。
-     */
-    @Query(TRANSACTION_SELECT + "\n        ORDER BY occurred_at DESC, transactions.id DESC")
-    fun observeAllTransactions(): Flow<List<TransactionRecord>>
 
     /**
      * 持续观察全部账户按历史账目聚合后的实时余额。
@@ -1531,25 +1522,6 @@ interface AccountingDao {
     /** 按外部交易摘要返回已有自动账单事件。 */
     @Query("SELECT * FROM auto_bookkeeping_events WHERE external_key_hash = :externalKeyHash LIMIT 1")
     suspend fun findAutoBookkeepingEventByExternalKey(externalKeyHash: String): AutoBookkeepingEventEntity?
-
-    /** 按本地指纹与时间窗口返回可能重复的自动账单事件。 */
-    @Query(
-        """
-        SELECT * FROM auto_bookkeeping_events
-        WHERE provider = :provider
-          AND fingerprint = :fingerprint
-          AND occurred_at BETWEEN :fromTime AND :toTime
-        ORDER BY ABS(occurred_at - :occurredAt), id DESC
-        LIMIT 1
-        """,
-    )
-    suspend fun findAutoBookkeepingEventByFingerprint(
-        provider: PaymentProvider,
-        fingerprint: String,
-        occurredAt: Long,
-        fromTime: Long,
-        toTime: Long,
-    ): AutoBookkeepingEventEntity?
 
     /** 按平台、方向和金额返回时间窗内可进一步比较的去重候选。 */
     @Query(

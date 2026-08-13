@@ -12,8 +12,6 @@ const val ALIPAY_PACKAGE = "com.eg.android.AlipayGphone"
 /** 云闪付 Android 客户端包名。 */
 const val UNIONPAY_PACKAGE = "com.unionpay"
 
-private val supportedPackages = setOf(WECHAT_PACKAGE, ALIPAY_PACKAGE, UNIONPAY_PACKAGE)
-
 /** 把受支持的支付客户端包名映射为平台。 */
 fun paymentProviderForPackage(packageName: String): PaymentProvider? = when (packageName) {
     WECHAT_PACKAGE -> PaymentProvider.WECHAT
@@ -21,9 +19,6 @@ fun paymentProviderForPackage(packageName: String): PaymentProvider? = when (pac
     UNIONPAY_PACKAGE -> PaymentProvider.UNIONPAY
     else -> null
 }
-
-/** 判断包名是否属于允许读取的三个支付客户端。 */
-fun isSupportedPaymentPackage(packageName: String): Boolean = packageName in supportedPackages
 
 /** 将外部交易标识与平台一起散列，避免保存可还原的订单号。 */
 internal fun hashExternalKey(provider: PaymentProvider, value: String): String =

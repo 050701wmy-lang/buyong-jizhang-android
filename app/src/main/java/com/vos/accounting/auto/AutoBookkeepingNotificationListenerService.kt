@@ -24,7 +24,7 @@ class AutoBookkeepingNotificationListenerService : NotificationListenerService()
     /** 过滤通知包名后读取标题、正文和展开正文。 */
     override fun onNotificationPosted(statusBarNotification: StatusBarNotification?) {
         val notification = statusBarNotification ?: return
-        if (!isSupportedPaymentPackage(notification.packageName)) return
+        if (paymentProviderForPackage(notification.packageName) == null) return
         val input = RuleInput(
             packageName = notification.packageName,
             textParts = notificationTextParts(notification.notification),

@@ -218,4 +218,3 @@ private fun packageForProvider(provider: PaymentProvider): String? = when (provi
 const val HOOK_STATUS_ACTIVE = "ACTIVE"
 private const val HOOK_RATE_WINDOW_MILLIS = 60_000L
 private const val MAX_HOOK_REQUESTS_PER_MINUTE = 30
-private const val HOOK_HOST_LOG_TAG = "AccountingHookHost"

@@ -2472,12 +2472,7 @@ private fun ManualKeypad(
         Row(Modifier.fillMaxWidth()) {
             ManualKeypadButton(".", Modifier.weight(1f)) { onAmountKey(".") }
             ManualKeypadButton("0", Modifier.weight(1f)) { onAmountKey("0") }
-            ManualKeypadButton(
-                text = "再记一笔",
-                modifier = Modifier.weight(1f),
-                enabled = false,
-                textSize = 13.sp,
-            ) {}
+            Spacer(Modifier.weight(1f))
             ManualKeypadButton(
                 text = if (writeInProgress) "保存中" else "完成",
                 modifier = Modifier.weight(1f),

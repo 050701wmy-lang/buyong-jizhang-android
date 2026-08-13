@@ -83,7 +83,6 @@ dependencies {
     implementation(libs.jetbrains.compose.runtime)
     implementation(libs.jetbrains.compose.foundation)
     implementation(libs.jetbrains.compose.ui)
-    implementation(libs.jetbrains.compose.ui.tooling.preview)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

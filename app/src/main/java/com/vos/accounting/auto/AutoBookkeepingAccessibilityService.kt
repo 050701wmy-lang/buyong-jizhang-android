@@ -45,7 +45,7 @@ class AutoBookkeepingAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val accessibilityEvent = event ?: return
         val packageName = accessibilityEvent.packageName?.toString() ?: return
-        if (!isSupportedPaymentPackage(packageName)) return
+        if (paymentProviderForPackage(packageName) == null) return
         val key = WindowKey(packageName, accessibilityEvent.windowId)
         val activityName = accessibilityEvent.className?.toString()
         val eventText = buildList {
