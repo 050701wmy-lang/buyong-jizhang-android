@@ -1,6 +1,8 @@
 package com.vos.accounting.hook
 
 import com.vos.accounting.model.TransactionType
+import java.time.LocalDateTime
+import java.time.ZoneId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -90,5 +92,42 @@ class AlipayHookParserTest {
         assertEquals("万红羊蛙蛙（商贸西门店）", capture?.merchant)
         assertEquals("花呗", capture?.paymentMethod)
         assertEquals("673dd3be-e3b0-4de9-8f4f-e64a2e29c0a0", capture?.externalTransactionId)
+    }
+
+    /** 验证当前支付宝账单详情的可见文本可提取完整支出字段。 */
+    @Test
+    fun parsesCurrentVisibleXriverBillDom() {
+        val capture = parser.parseDom(
+            "\"飞宇6店\\n支出50元\\n交易成功\\n支付时间\\n2026-08-12 18:48:33" +
+                "\\n付款方式\\n花呗\\n商品说明\\n飞宇网咖-陈洞路店-扫码支付" +
+                "\\n收单机构\\n上海盛付通电子支付服务有限公司\"",
+        )
+
+        assertEquals(TransactionType.EXPENSE, capture?.type)
+        assertEquals("50.00", capture?.amount)
+        assertEquals("飞宇6店", capture?.merchant)
+        assertEquals("飞宇网咖-陈洞路店-扫码支付", capture?.note)
+        assertEquals("花呗", capture?.paymentMethod)
+        assertEquals(
+            LocalDateTime.of(2026, 8, 12, 18, 48, 33)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli(),
+            capture?.occurredAt,
+        )
+    }
+
+    /** 验证折叠交易号的收益详情仍可生成收入候选。 */
+    @Test
+    fun parsesIncomeBillDomWithoutExternalId() {
+        val capture = parser.parseDom(
+            "\"测试货币基金\\n￥0.41\\n交易成功\\n创建时间\\n2026-08-13 06:17:23" +
+                "\\n商品说明\\n余额宝-2026.08.12-收益发放\\n对方账户\\n测试货币基金\"",
+        )
+
+        assertEquals(TransactionType.INCOME, capture?.type)
+        assertEquals("0.41", capture?.amount)
+        assertEquals("测试货币基金", capture?.merchant)
+        assertNull(capture?.externalTransactionId)
     }
 }

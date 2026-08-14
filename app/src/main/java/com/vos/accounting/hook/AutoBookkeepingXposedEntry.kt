@@ -1,20 +1,26 @@
 package com.vos.accounting.hook
 
+import android.app.Activity
 import android.app.Application
+import android.app.Instrumentation
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Parcel
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.ValueCallback
 import android.widget.TextView
 import com.vos.accounting.auto.HOOK_CAPTURE_BINDER_DESCRIPTOR
@@ -27,12 +33,15 @@ import com.vos.accounting.model.TransactionType
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface
+import java.lang.ref.WeakReference
 import java.lang.reflect.Proxy
 import java.math.BigDecimal
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 
 /** 在微信与支付宝进程中安装 API 102 文本结果页 Hook。 */
 class AutoBookkeepingXposedEntry : XposedModule() {
@@ -45,8 +54,13 @@ class AutoBookkeepingXposedEntry : XposedModule() {
     private val pendingWechatDomProbes = mutableMapOf<Any, Runnable>()
     private val pendingAlipayDomProbes = mutableMapOf<Any, Runnable>()
     private val observedWechatWebViews = WeakHashMap<Any, Boolean>()
+    private val observedAlipayWebViews = WeakHashMap<Any, Boolean>()
     private val observedAlipayClientClasses = mutableSetOf<Class<*>>()
     private val alipayDomDiagnosticStages = mutableSetOf<String>()
+    private var currentAlipayActivity: WeakReference<Activity>? = null
+    private var currentAlipayWebView: WeakReference<Any>? = null
+    private var pendingAlipayDomCapture: AlipayParsedCapture? = null
+    private var pendingAlipayDomCaptureAt = 0L
     private var lastAlipayFingerprint = ""
     private var lastAlipaySubmittedAt = 0L
     private var loadedProcess = ""
@@ -222,6 +236,26 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         installAlipayMyWebViewAdapter(context, targetClassLoader, version)
     }
 
+    /** 记录支付宝当前可见页面，供 MyWeb 包装对象定位实际宿主视图。 */
+    private fun installAlipayActivityTracking(onActivityResumed: () -> Unit) {
+        val onResume = Instrumentation::class.java.getDeclaredMethod(
+            "callActivityOnResume",
+            Activity::class.java,
+        )
+        hook(onResume)
+            .setId(ALIPAY_ACTIVITY_RESUME_HOOK_ID)
+            .setExceptionMode(XposedInterface.ExceptionMode.DEFAULT)
+            .intercept { chain ->
+                val result = chain.proceed()
+                val activity = chain.getArg(0) as? Activity
+                if (activity?.packageName == ALIPAY_PACKAGE_NAME) {
+                    currentAlipayActivity = WeakReference(activity)
+                    onActivityResumed()
+                }
+                result
+            }
+    }
+
     /** Hook 支付宝旧 H5 账单页完成与页面出现信号。 */
     private fun installAlipayLegacyWebViewAdapter(
         context: Context,
@@ -289,12 +323,17 @@ class AutoBookkeepingXposedEntry : XposedModule() {
                 String::class.java,
                 valueCallbackClass,
             )
-            val scheduleProbe = { webView: Any ->
+            val scheduleProbe = scheduleProbe@{ webView: Any ->
+                currentAlipayWebView = WeakReference(webView)
+                if (!isCurrentVisibleAlipayWebView(webView)) return@scheduleProbe
                 scheduleAlipayDomProbe(webView) {
                     probeAlipayDom(context, version, "alipay_myweb", ALIPAY_MY_WEB_ADAPTER_ID) { onText ->
                         readAlipayMyWebDom(webView, evaluateJavascript, valueCallbackClass, onText)
                     }
                 }
+            }
+            installAlipayActivityTracking {
+                currentAlipayWebView?.get()?.let(scheduleProbe)
             }
             installAlipayMyWebLoadHook(
                 webViewClass.getDeclaredMethod("loadUrl", String::class.java),
@@ -334,6 +373,17 @@ class AutoBookkeepingXposedEntry : XposedModule() {
                     val webViewClient = chain.getArg(0)
                     if (webView != null && webViewClass.isInstance(webView)) {
                         scheduleProbe(webView)
+                        alipayDomHandler.postDelayed(
+                            { scheduleProbe(webView) },
+                            ALIPAY_MY_WEB_STABLE_RETRY_MILLIS,
+                        )
+                        if (observeWebViewDraw(webView, observedAlipayWebViews) { scheduleProbe(webView) }) {
+                            log(
+                                Log.INFO,
+                                HOOK_LOG_TAG,
+                                "event=hook_registered process=$loadedProcess channel=alipay_myweb_draw",
+                            )
+                        }
                     }
                     if (webViewClient != null) {
                         installAlipayMyWebPageFinishedHook(
@@ -419,6 +469,18 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         }
     }
 
+    /** 为同一 WebView 只注册一次绘制监听，并在页面内容变化时执行回调。 */
+    private fun observeWebViewDraw(
+        webView: Any,
+        observedWebViews: WeakHashMap<Any, Boolean>,
+        onDraw: () -> Unit,
+    ): Boolean {
+        val view = webView as? View ?: return false
+        if (observedWebViews.put(webView, true) != null) return false
+        view.viewTreeObserver.addOnDrawListener(onDraw)
+        return true
+    }
+
     /** 连续读取两次支付宝 DOM，只提交内容一致且完整的账单。 */
     private fun probeAlipayDom(
         context: Context,
@@ -442,6 +504,9 @@ class AutoBookkeepingXposedEntry : XposedModule() {
                 retry()
                 return@readDom
             }
+            if (submitStableAlipayCapture(context, version, channel, adapterId, firstCapture)) {
+                return@readDom
+            }
             alipayDomHandler.postDelayed({
                 readDom { secondText ->
                     val secondCapture = runCatching { alipayParser.parseDom(secondText) }.getOrNull()
@@ -450,18 +515,40 @@ class AutoBookkeepingXposedEntry : XposedModule() {
                         retry()
                         return@readDom
                     }
-                    if (firstCapture != secondCapture) {
+                    if (!submitStableAlipayCapture(context, version, channel, adapterId, secondCapture)) {
                         logAlipayDomDiagnostic("fields_unstable_$attempt", secondText.length)
                         retry()
-                        return@readDom
-                    }
-                    if (shouldSubmitAlipay(secondCapture)) {
-                        submitAlipayCapture(context, version, adapterId, secondCapture)
-                        log(Log.INFO, HOOK_LOG_TAG, "event=hook_hit process=$loadedProcess channel=$channel")
                     }
                 }
             }, ALIPAY_DOM_STABILITY_MILLIS)
         }
+    }
+
+    /** 跨 XRiver 页面实例累计一致候选，并在第二次命中后提交待确认账单。 */
+    private fun submitStableAlipayCapture(
+        context: Context,
+        version: String,
+        channel: String,
+        adapterId: String,
+        capture: AlipayParsedCapture,
+    ): Boolean {
+        if (!isStableAlipayDomCapture(capture)) return false
+        if (shouldSubmitAlipay(capture)) {
+            submitAlipayCapture(context, version, adapterId, capture)
+            log(Log.INFO, HOOK_LOG_TAG, "event=hook_hit process=$loadedProcess channel=$channel")
+        }
+        return true
+    }
+
+    /** 判断当前候选是否与短时间内上一 XRiver 页面实例的候选一致。 */
+    @Synchronized
+    private fun isStableAlipayDomCapture(capture: AlipayParsedCapture): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val stable = pendingAlipayDomCapture == capture &&
+            now - pendingAlipayDomCaptureAt <= ALIPAY_DOM_CANDIDATE_TTL_MILLIS
+        pendingAlipayDomCapture = if (stable) null else capture
+        pendingAlipayDomCaptureAt = if (stable) 0L else now
+        return stable
     }
 
     /** 读取一次 WebView 内存 DOM 文本，不持久化页面原文。 */
@@ -486,6 +573,15 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         valueCallbackClass: Class<*>,
         onText: (String) -> Unit,
     ) {
+        val delivered = AtomicBoolean(false)
+        val deliverText = { text: String ->
+            if (delivered.compareAndSet(false, true)) onText(text)
+        }
+        readAlipayAccessibilityDom(webView)?.let { accessibilityText ->
+            logAlipayDomDiagnostic("accessibility_fallback", accessibilityText.length)
+            deliverText(JsonPrimitive(accessibilityText).toString())
+            return
+        }
         val callback = Proxy.newProxyInstance(
             valueCallbackClass.classLoader,
             arrayOf(valueCallbackClass),
@@ -494,7 +590,16 @@ class AutoBookkeepingXposedEntry : XposedModule() {
                 val value = arguments?.firstOrNull()
                 val text = value as? String ?: value?.toString()
                 logAlipayDomDiagnostic("callback", text?.length ?: 0)
-                text?.let(onText)
+                val accessibilityText = text
+                    ?.takeIf { it.length <= 2 }
+                    ?.let { readAlipayAccessibilityDom(webView) }
+                if (accessibilityText != null) {
+                    logAlipayDomDiagnostic("accessibility_fallback", accessibilityText.length)
+                    deliverText(JsonPrimitive(accessibilityText).toString())
+                } else {
+                    if ((text?.length ?: 0) <= 2) logAlipayDomDiagnostic("accessibility_unavailable", 0)
+                    text?.let(deliverText)
+                }
             }
             null
         }
@@ -503,6 +608,69 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         }.onFailure { error ->
             log(Log.WARN, HOOK_LOG_TAG, "event=hook_failed process=$loadedProcess channel=alipay_myweb", error)
         }
+        alipayDomHandler.postDelayed({
+            if (delivered.get()) return@postDelayed
+            val accessibilityText = readAlipayAccessibilityDom(webView)
+            if (accessibilityText != null) {
+                logAlipayDomDiagnostic("accessibility_fallback", accessibilityText.length)
+                deliverText(JsonPrimitive(accessibilityText).toString())
+            } else {
+                deliverText("")
+            }
+        }, ALIPAY_MY_WEB_CALLBACK_TIMEOUT_MILLIS)
+    }
+
+    /** 从 MyWeb 暴露的无障碍虚拟节点树读取当前页面文字。 */
+    private fun readAlipayAccessibilityDom(webView: Any): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return null
+        if (!isCurrentVisibleAlipayWebView(webView)) return null
+        return runCatching {
+            val pendingViews = ArrayDeque<View>()
+            pendingViews.add(webView as View)
+            val visitedViews = mutableSetOf<View>()
+            val pendingNodes = ArrayDeque<AccessibilityNodeInfo>()
+            while (pendingViews.isNotEmpty()) {
+                val view = pendingViews.removeFirst()
+                if (!visitedViews.add(view) || !view.isShown) continue
+                if (view.isAttachedToWindow && view.accessibilityNodeProvider != null) {
+                    runCatching {
+                        view.createAccessibilityNodeInfo().apply {
+                            setQueryFromAppProcessEnabled(view.rootView, true)
+                        }
+                    }.getOrNull()?.let(pendingNodes::addLast)
+                }
+                if (view is ViewGroup) {
+                    repeat(view.childCount) { index -> pendingViews.addLast(view.getChildAt(index)) }
+                }
+            }
+            val texts = mutableListOf<String>()
+            var visitedNodeCount = 0
+            while (pendingNodes.isNotEmpty() && visitedNodeCount++ < MAX_ACCESSIBILITY_DOM_NODES) {
+                val node = pendingNodes.removeFirst()
+                listOf(node.text, node.contentDescription).forEach { rawText ->
+                    val text = rawText?.toString()?.trim()?.take(MAX_HOOK_TEXT_LENGTH).orEmpty()
+                    if (text.isNotEmpty() && texts.lastOrNull() != text) texts += text
+                }
+                repeat(node.childCount) { offset ->
+                    val index = node.childCount - offset - 1
+                    node.getChild(index)?.let(pendingNodes::addFirst)
+                }
+            }
+            texts.joinToString("\n").takeIf(String::isNotEmpty)
+        }.onFailure { error ->
+            logAlipayDomDiagnostic("accessibility_failed_${error.javaClass.simpleName}", 0)
+        }.getOrNull()
+    }
+
+    /** 判断候选 WebView 是否属于当前前台支付宝页面且具有实际可见区域。 */
+    private fun isCurrentVisibleAlipayWebView(webView: Any): Boolean {
+        val view = webView as? View ?: return false
+        val activity = currentAlipayActivity?.get() ?: return false
+        if (activity.isFinishing || activity.isDestroyed) return false
+        if (!view.isAttachedToWindow || !view.isShown || view.windowVisibility != View.VISIBLE) return false
+        if (view.rootView !== activity.window.decorView) return false
+        val visibleBounds = Rect()
+        return view.getGlobalVisibleRect(visibleBounds) && !visibleBounds.isEmpty
     }
 
     /** 每个 MyWeb DOM 诊断阶段仅记录一次非敏感元数据。 */
@@ -626,11 +794,9 @@ class AutoBookkeepingXposedEntry : XposedModule() {
         evaluateJavascript: java.lang.reflect.Method,
         version: String,
     ) {
-        val view = webView as? View ?: return
-        if (observedWechatWebViews.put(webView, true) != null) return
-        view.viewTreeObserver.addOnDrawListener {
+        if (!observeWebViewDraw(webView, observedWechatWebViews) {
             scheduleWechatXWebDomProbe(context, webView, evaluateJavascript, version)
-        }
+        }) return
         log(Log.INFO, HOOK_LOG_TAG, "event=hook_registered process=$loadedProcess channel=xweb_draw")
     }
 
@@ -1094,6 +1260,7 @@ private const val ALIPAY_SYNC_GET_DATA_HOOK_ID = "alipay_sync_get_data"
 private const val ALIPAY_SYNC_TO_STRING_HOOK_ID = "alipay_sync_to_string"
 private const val ALIPAY_H5_PAGE_FINISHED_HOOK_ID = "alipay_h5_page_finished"
 private const val ALIPAY_H5_EVALUATE_HOOK_ID = "alipay_h5_evaluate_javascript"
+private const val ALIPAY_ACTIVITY_RESUME_HOOK_ID = "alipay_activity_resume"
 private const val ALIPAY_MY_WEB_LOAD_URL_HOOK_ID = "alipay_myweb_load_url"
 private const val ALIPAY_MY_WEB_LOAD_URL_HEADERS_HOOK_ID = "alipay_myweb_load_url_headers"
 private const val ALIPAY_MY_WEB_EVALUATE_HOOK_ID = "alipay_myweb_evaluate_javascript"
@@ -1108,6 +1275,7 @@ private const val ALIPAY_H5_ADAPTER_ID = "alipay_h5_dom_v1"
 private const val ALIPAY_MY_WEB_ADAPTER_ID = "alipay_myweb_dom_v1"
 private const val MAX_HOOK_PAYLOAD_BYTES = 64 * 1024
 private const val MAX_HOOK_TEXT_LENGTH = 256
+private const val MAX_ACCESSIBILITY_DOM_NODES = 512
 private const val MAX_WECHAT_MESSAGE_FIELD_LENGTH = 16 * 1024
 private const val MAX_WECHAT_MERCHANT_LENGTH = 80
 private const val MIN_MILLISECOND_TIMESTAMP = 1_000_000_000_000L
@@ -1120,7 +1288,10 @@ private const val WECHAT_DOM_STABILITY_MILLIS = 250L
 private const val ALIPAY_DOM_DEBOUNCE_MILLIS = 500L
 private const val ALIPAY_DOM_STABILITY_MILLIS = 250L
 private const val ALIPAY_DOM_RETRY_MILLIS = 250L
-private const val ALIPAY_DOM_MAX_ATTEMPTS = 3
+private const val ALIPAY_DOM_MAX_ATTEMPTS = 8
+private const val ALIPAY_MY_WEB_CALLBACK_TIMEOUT_MILLIS = 300L
+private const val ALIPAY_MY_WEB_STABLE_RETRY_MILLIS = 2_000L
+private const val ALIPAY_DOM_CANDIDATE_TTL_MILLIS = 10_000L
 private const val ALIPAY_PAGE_APPEARED_MARKER = "ALIPAYVIEWAPPEARED"
 private const val WEB_DOM_TEXT_SCRIPT = "(function(){return document.body?document.body.innerText:'';})()"
 private val WECHAT_XWEB_TOUCH_METHODS = setOf("onTouchEvent", "dispatchTouchEvent")

@@ -43,7 +43,7 @@ internal class AlipayHookParser {
         val lines = text.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
         val type = detectAlipayType(text) ?: return null
         val amount = findHookAmount(text) ?: return null
-        val externalId = findLabeledValue(lines, ALIPAY_EXTERNAL_ID_LABELS) ?: return null
+        val externalId = findLabeledValue(lines, ALIPAY_EXTERNAL_ID_LABELS)
         val occurredAt = findLabeledValue(lines, ALIPAY_TIME_LABELS)?.let(::parseAlipayTime) ?: return null
         val merchant = findMerchantNearAmount(lines)
             ?: findLabeledValue(lines, ALIPAY_MERCHANT_LABELS)
@@ -214,7 +214,8 @@ private const val MAX_ALIPAY_JSON_DEPTH = 12
 private const val MIN_ALIPAY_MILLISECOND_TIMESTAMP = 1_000_000_000_000L
 private val ALIPAY_SUCCESS_KEYWORDS = listOf("交易成功", "支付成功", "付款成功", "收款成功", "收款到账", "退款成功")
 private val ALIPAY_SUCCESS_CODES = listOf("TRADE_SUCCESS", "PAY_SUCCESS", "SUCCESS")
-private val ALIPAY_INCOME_KEYWORDS = listOf("收款成功", "收款到账", "收入", "已收款", "退款成功", "退款到账")
+private val ALIPAY_INCOME_KEYWORDS =
+    listOf("收款成功", "收款到账", "收入", "已收款", "退款成功", "退款到账", "收益发放", "收益到账")
 private val ALIPAY_EXPENSE_KEYWORDS = listOf(
     "支付成功", "付款成功", "交易成功", "支出", "消费", "扣款", "TRADE_SUCCESS", "PAY_SUCCESS",
 )

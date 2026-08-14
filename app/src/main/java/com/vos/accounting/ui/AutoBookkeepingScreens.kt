@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -41,6 +42,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.vos.accounting.auto.AutoBookkeepingAccessibilityService
 import com.vos.accounting.auto.AutoBookkeepingNotificationListenerService
+import com.vos.accounting.auto.LocalOcrModels
 import com.vos.accounting.data.AutoBookkeepingEventEntity
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
@@ -66,6 +68,8 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /** 展示 AI 记账来源、通知隐私与系统权限状态。 */
 @Composable
@@ -97,6 +101,11 @@ fun AutoBookkeepingSettingsScreen(
     var showAiConfiguration by rememberSaveable { mutableStateOf(false) }
     var showOcrRisk by rememberSaveable { mutableStateOf(false) }
     var showVisionRisk by rememberSaveable { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val ocrModels = remember(context) { LocalOcrModels(context) }
+    var ocrModelsInstalled by remember { mutableStateOf(ocrModels.isInstalled()) }
+    var ocrDownloadInProgress by remember { mutableStateOf(false) }
+    var ocrDownloadFailed by rememberSaveable { mutableStateOf(false) }
     SecondaryScaffold(title = "AI 记账", backdrop = backdrop, onBack = onBack) { innerPadding ->
         SecondaryList(innerPadding) {
             item { SectionTitle("功能") }
@@ -172,7 +181,7 @@ fun AutoBookkeepingSettingsScreen(
                     insideMargin = PaddingValues(0.dp),
                 ) {
                     SwitchPreference(
-                        checked = uiState.autoLocalOcrEnabled,
+                        checked = uiState.autoLocalOcrEnabled && ocrModelsInstalled,
                         onCheckedChange = { enabled ->
                             if (enabled) {
                                 showOcrRisk = true
@@ -182,16 +191,24 @@ fun AutoBookkeepingSettingsScreen(
                             }
                         },
                         title = "本地 OCR",
-                        summary = "规则缺少关键字段时，在内存中识别支付页截图",
+                        summary = when {
+                            ocrDownloadInProgress -> "正在下载 OCR 组件（约 11 MB）…"
+                            ocrDownloadFailed -> "下载失败，请检查网络后重试"
+                            !ocrModelsInstalled -> "首次开启时下载约 11 MB OCR 组件"
+                            else -> "规则缺少关键字段时，在内存中识别支付页截图"
+                        },
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = !ocrDownloadInProgress,
                     )
                     SwitchPreference(
-                        checked = uiState.autoRootOcrEnabled,
+                        checked = uiState.autoRootOcrEnabled &&
+                            uiState.autoLocalOcrEnabled &&
+                            ocrModelsInstalled,
                         onCheckedChange = viewModel::updateAutoRootOcrEnabled,
                         title = "Root 截图兜底",
                         summary = "仅执行固定 su -c screencap -p，不读取支付应用数据",
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = uiState.autoLocalOcrEnabled,
+                        enabled = uiState.autoLocalOcrEnabled && ocrModelsInstalled && !ocrDownloadInProgress,
                     )
                     BasicComponent(
                         title = "测试 Root 截图",
@@ -311,11 +328,29 @@ fun AutoBookkeepingSettingsScreen(
     RiskConfirmationDialog(
         show = showOcrRisk,
         title = "开启本地截图识别",
-        message = "支付页截图会在内存中裁剪并交给本地 PP-OCRv5；截图和 OCR 原文不会写入文件、日志、数据库或备份。",
+        message = "首次开启会下载约 11 MB 的 PP-OCRv5 模型。支付页截图只在内存中识别，截图和 OCR 原文不会写入文件、日志、数据库或备份。",
         onDismiss = { showOcrRisk = false },
         onConfirm = {
             showOcrRisk = false
-            viewModel.updateAutoLocalOcrEnabled(true)
+            if (ocrModelsInstalled) {
+                viewModel.updateAutoLocalOcrEnabled(true)
+            } else {
+                ocrDownloadInProgress = true
+                ocrDownloadFailed = false
+                coroutineScope.launch {
+                    try {
+                        ocrModels.install()
+                        ocrModelsInstalled = true
+                        viewModel.updateAutoLocalOcrEnabled(true)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        ocrDownloadFailed = true
+                    } finally {
+                        ocrDownloadInProgress = false
+                    }
+                }
+            }
         },
     )
     RiskConfirmationDialog(

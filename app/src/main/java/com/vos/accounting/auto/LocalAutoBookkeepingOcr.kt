@@ -4,10 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
 import com.equationl.ncnnandroidppocr.OCR
-import com.equationl.ncnnandroidppocr.bean.Device
 import com.equationl.ncnnandroidppocr.bean.DrawModel
-import com.equationl.ncnnandroidppocr.bean.ImageSize
-import com.equationl.ncnnandroidppocr.bean.ModelType
 import com.vos.accounting.model.PaymentProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** 串行运行内存截图 OCR，并按支付平台执行十秒冷却。 */
 class LocalAutoBookkeepingOcr(context: Context) {
-    private val assets = context.applicationContext.assets
+    private val models = LocalOcrModels(context)
     private val lastRunAt = mutableMapOf<PaymentProvider, Long>()
     private val executor = Executors.newSingleThreadExecutor()
     private val running = AtomicBoolean(false)
@@ -50,7 +47,7 @@ class LocalAutoBookkeepingOcr(context: Context) {
                     try {
                         runCatching {
                             val engine = ocr ?: OCR().let { created ->
-                                if (created.initModelFromAssert(assets, ModelType.Mobile, ImageSize.Size720, Device.CPU)) {
+                                if (models.initialize(created)) {
                                     created.also { ocr = it }
                                 } else {
                                     created.release()
