@@ -280,7 +280,15 @@ private val WECHAT_EXTERNAL_ID_LABELS = listOf("交易单号", "订单号", "商
 private val WECHAT_TIME_LABELS = listOf("支付时间", "交易时间", "收款时间", "转账时间", "退款时间")
 private val WECHAT_STATUS_LABELS = listOf("当前状态", "交易状态", "支付状态")
 private val WECHAT_PRODUCT_LABELS = listOf("商品")
-private val WECHAT_DETAIL_SUCCESS_KEYWORDS = listOf("支付成功", "付款成功", "收款成功", "交易成功", "已退款", "退款成功")
+private val WECHAT_DETAIL_SUCCESS_KEYWORDS = listOf(
+    "支付成功",
+    "付款成功",
+    "收款成功",
+    "交易成功",
+    "对方已收钱",
+    "已退款",
+    "退款成功",
+)
 private const val WECHAT_BILL_LIST_ACTION = "查看账单详情"
 private const val WECHAT_DETAIL_TAB_TITLE = "交易详情"
 private val WECHAT_MERCHANT_XML_TAGS = listOf("merchant_name", "payee_name", "receiver_name", "payer_name")

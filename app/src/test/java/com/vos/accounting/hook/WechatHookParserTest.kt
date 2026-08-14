@@ -114,6 +114,31 @@ class WechatHookParserTest {
         assertEquals("蜜雪冰城928085店", capture?.note)
     }
 
+    /** 微信转账详情的“对方已收钱”状态应生成支出账单。 */
+    @Test
+    fun parseXWebDomReceivedTransfer() {
+        val dom = Json.encodeToString(
+            "转账-转给测试用户\n−55.00\n当前状态\n对方已收钱\n转账说明\n微信转账\n" +
+                "转账时间\n2026年8月12日 20:52:08\n收款时间\n2026年8月12日 20:52:18\n" +
+                "支付方式\n中国银行储蓄卡(3279)\n转账单号\ntransfer_order_1",
+        )
+
+        val capture = parser.parseXWebDom(dom)
+
+        assertEquals(TransactionType.EXPENSE, capture?.type)
+        assertEquals("55.00", capture?.amount)
+        assertEquals("转账-转给测试用户", capture?.merchant)
+        assertEquals("中国银行储蓄卡(3279)", capture?.paymentMethod)
+        assertEquals("transfer_order_1", capture?.externalTransactionId)
+        assertEquals(
+            LocalDateTime.of(2026, 8, 12, 20, 52, 8)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli(),
+            capture?.occurredAt,
+        )
+    }
+
     /** XWeb 列表 DOM 即使混有其他卡片的详情字段也不应生成账单。 */
     @Test
     fun rejectXWebListDom() {

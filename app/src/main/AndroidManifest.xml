@@ -22,6 +22,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".auto.AutoBookkeepingSheetActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Accounting.Translucent"
+            android:windowSoftInputMode="adjustResize" />
         <service
             android:name=".auto.AutoBookkeepingAccessibilityService"
             android:exported="false"

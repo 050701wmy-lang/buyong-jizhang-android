@@ -8,13 +8,15 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import com.vos.accounting.MainActivity
+import android.graphics.drawable.Icon
+import com.vos.accounting.R
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.AutoBookkeepingNotificationData
 import com.vos.accounting.model.AutoBookkeepingStatus
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
+import com.xzakota.hyper.notification.focus.FocusNotification
 import java.math.BigDecimal
 
 /** 自动账单通知渠道标识。 */
@@ -37,8 +39,11 @@ class AutoBookkeepingNotificationManager(
         }
         val data = repository.findAutoBookkeepingNotificationData(eventId) ?: return
         createChannel()
-        val privacyMode = repository.getSettingsSnapshot().notificationPrivacyMode
-        notificationManager.notify(notificationId(eventId), buildNotification(data, privacyMode))
+        val settings = repository.getSettingsSnapshot()
+        notificationManager.notify(
+            notificationId(eventId),
+            buildNotification(data, settings.notificationPrivacyMode, settings.xiaomiSuperIslandEnabled),
+        )
     }
 
     /** 移除已经确认或忽略的账单通知。 */
@@ -64,30 +69,41 @@ class AutoBookkeepingNotificationManager(
     private fun buildNotification(
         data: AutoBookkeepingNotificationData,
         privacyMode: NotificationPrivacyMode,
+        xiaomiSuperIslandEnabled: Boolean,
     ): Notification {
         val event = data.event
         val generic = privacyMode == NotificationPrivacyMode.HIDE_DETAILS
         val recorded = event.status == AutoBookkeepingStatus.CONFIRMED
+        val title = when {
+            recorded && generic -> "检测到一笔已记录账单"
+            recorded -> "已记录 · ${notificationTitle(data)}"
+            generic -> "检测到一笔待确认账单"
+            else -> notificationTitle(data)
+        }
+        val content = when {
+            recorded && generic -> "无需重复入账"
+            generic -> "点击查看并编辑"
+            else -> notificationText(data)
+        }
+        val confirmAction = if (!recorded && event.canConfirm) {
+            Notification.Action.Builder(
+                null,
+                "确认入账",
+                actionPendingIntent(ACTION_CONFIRM_AUTO_BOOKKEEPING, event.id, 1),
+            ).build()
+        } else {
+            null
+        }
         val builder = Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setCategory(Notification.CATEGORY_STATUS)
             .setOnlyAlertOnce(true)
             .setAutoCancel(recorded)
-            .setContentTitle(
-                when {
-                    recorded && generic -> "检测到一笔已记录账单"
-                    recorded -> "已记录 · ${notificationTitle(data)}"
-                    generic -> "检测到一笔待确认账单"
-                    else -> notificationTitle(data)
-                },
-            )
-            .setContentText(
-                when {
-                    recorded && generic -> "无需重复入账"
-                    generic -> "点击查看并编辑"
-                    else -> notificationText(data)
-                },
-            )
+            .setContentTitle(title)
+            .setContentText(content)
+        if (xiaomiSuperIslandEnabled) {
+            builder.addExtras(buildSuperIslandExtras(data, privacyMode, recorded, confirmAction))
+        }
         if (!recorded) {
             builder.setContentIntent(editPendingIntent(event.id)).addAction(
                 Notification.Action.Builder(
@@ -103,14 +119,8 @@ class AutoBookkeepingNotificationManager(
                     actionPendingIntent(ACTION_IGNORE_AUTO_BOOKKEEPING, event.id, 2),
                 ).build(),
             )
-            if (event.canConfirm) {
-                builder.addAction(
-                    Notification.Action.Builder(
-                        null,
-                        "确认入账",
-                        actionPendingIntent(ACTION_CONFIRM_AUTO_BOOKKEEPING, event.id, 1),
-                    ).build(),
-                )
+            if (confirmAction != null) {
+                builder.addAction(confirmAction)
             }
         }
         when (privacyMode) {
@@ -120,7 +130,7 @@ class AutoBookkeepingNotificationManager(
                 builder.setVisibility(Notification.VISIBILITY_PRIVATE)
                 builder.setPublicVersion(
                     Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
-                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setSmallIcon(R.drawable.ic_launcher_foreground)
                         .setContentTitle(if (recorded) "检测到一笔已记录账单" else "检测到一笔待确认账单")
                         .setContentText("解锁后查看详情")
                         .build(),
@@ -130,13 +140,101 @@ class AutoBookkeepingNotificationManager(
         return builder.build()
     }
 
+    /** 构建 HyperOS 3 超级岛与 HyperOS 2 焦点通知共用的扩展数据。 */
+    private fun buildSuperIslandExtras(
+        data: AutoBookkeepingNotificationData,
+        privacyMode: NotificationPrivacyMode,
+        recorded: Boolean,
+        confirmAction: Notification.Action?,
+    ) = FocusNotification.buildV3 {
+        val showDetails = privacyMode != NotificationPrivacyMode.HIDE_DETAILS
+        val status = if (recorded) "已记录" else "待确认"
+        val title = if (showDetails) notificationTitle(data) else "账单$status"
+        val content = if (showDetails) notificationText(data) else "打开随记查看详情"
+        val islandAccount = if (showDetails) data.accountName ?: "待选账户" else "随记账单"
+        val islandRight = if (showDetails && !recorded) {
+            "${typeLabel(data.event.type)} ${formatAmount(data.event.amountMinor)}"
+        } else {
+            status
+        }
+        val appIcon = createPicture(
+            "accounting_app_icon",
+            Icon.createWithResource(context, R.mipmap.ic_launcher),
+        )
+        val confirmActionKey = confirmAction?.let {
+            createAction("miui.focus.action_confirm_bookkeeping", it)
+        }
+
+        business = "bookkeeping"
+        isShowNotification = true
+        islandFirstFloat = true
+        enableFloat = true
+        filterWhenNoPermission = false
+        ticker = title
+        tickerPic = appIcon
+        aodTitle = if (privacyMode == NotificationPrivacyMode.SHOW_DETAILS) title else "账单$status"
+        aodPic = appIcon
+
+        baseInfo {
+            type = 2
+            this.title = title
+            colorTitle = "#4C82F7"
+            colorTitleDark = "#4C82F7"
+            this.content = content
+        }
+        hintInfo {
+            type = 1
+            this.title = status
+            if (confirmActionKey != null) {
+                actionInfo {
+                    action = confirmActionKey
+                }
+            } else {
+                this.content = if (recorded) "无需重复入账" else "请先补全账单信息"
+            }
+        }
+        island {
+            islandProperty = if (confirmActionKey != null) 2 else 1
+            highlightColor = "#2B6BF3"
+            smallIslandArea {
+                picInfo {
+                    type = 1
+                    pic = appIcon
+                    contentDescription = "随记账单"
+                }
+            }
+            bigIslandArea {
+                imageTextInfoLeft {
+                    type = 1
+                    picInfo {
+                        type = 1
+                        pic = appIcon
+                        contentDescription = "随记账单"
+                    }
+                    textInfo {
+                        this.title = islandAccount
+                        narrowFont = true
+                    }
+                }
+                imageTextInfoRight {
+                    type = 2
+                    textInfo {
+                        this.title = islandRight
+                        showHighlightColor = showDetails
+                        narrowFont = true
+                    }
+                }
+            }
+        }
+    }
+
     /** 创建点击正文或编辑操作时打开 Activity 的意图。 */
     private fun editPendingIntent(eventId: Long): PendingIntent = PendingIntent.getActivity(
         context,
         notificationId(eventId),
-        Intent(context, MainActivity::class.java)
+        Intent(context, AutoBookkeepingSheetActivity::class.java)
             .putExtra(EXTRA_AUTO_BOOKKEEPING_EVENT_ID, eventId)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
@@ -147,6 +245,7 @@ class AutoBookkeepingNotificationManager(
             notificationId(eventId) * 10 + offset,
             Intent(context, AutoBookkeepingActionReceiver::class.java)
                 .setAction(action)
+                .addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
                 .putExtra(EXTRA_AUTO_BOOKKEEPING_EVENT_ID, eventId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )

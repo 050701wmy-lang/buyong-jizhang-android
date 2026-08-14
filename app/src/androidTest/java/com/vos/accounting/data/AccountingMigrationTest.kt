@@ -713,6 +713,30 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证 v21 升级后小米超级岛开关默认开启。 */
+    @Test
+    fun migrateVersionTwentyOneToVersionTwentyTwo() {
+        helper.createDatabase(DATABASE_NAME, 21).close()
+
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            22,
+            true,
+            AccountingDatabase.MIGRATION_21_22,
+        )
+        migrated.query("PRAGMA table_info(app_settings)").use {
+            var found = false
+            while (it.moveToNext()) {
+                if (it.getString(1) == "xiaomi_super_island_enabled") {
+                    assertEquals("1", it.getString(4))
+                    found = true
+                }
+            }
+            assertTrue(found)
+        }
+        migrated.close()
+    }
+
     /**
      * 验证 v1 数据库经过连续迁移后完整升级到当前版本。
      */

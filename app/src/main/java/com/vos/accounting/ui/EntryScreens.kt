@@ -133,6 +133,7 @@ fun ManualEntryScreen(
     initialDraft: TransactionDraft? = null,
     draftKey: Long = 0,
     allowLedgerChange: Boolean = true,
+    embeddedInSheet: Boolean = false,
     onSave: (TransactionDraft, () -> Unit) -> Unit,
     onUpdate: (Long, TransactionDraft, () -> Unit) -> Unit = { _, _, _ -> },
     onDelete: (Long, () -> Unit) -> Unit = { _, _ -> },
@@ -290,15 +291,7 @@ fun ManualEntryScreen(
         }
     }
 
-    SecondaryScaffold(
-        title = selectableLedgers.firstOrNull { it.id == ledgerId }?.name.orEmpty(),
-        backdrop = backdrop,
-        onBack = onBack,
-        collapsible = false,
-        onTitleClick = if (allowLedgerChange) ({ showLedgerPicker = true }) else null,
-        navigationIcon = MiuixIcons.Close,
-        navigationContentDescription = "关闭",
-    ) { innerPadding ->
+    val entryContent: @Composable (PaddingValues) -> Unit = { innerPadding ->
         ManualEntryContent(
             innerPadding = innerPadding,
             amountExpression = amountExpression,
@@ -381,6 +374,20 @@ fun ManualEntryScreen(
                     }
                 }
             },
+        )
+    }
+    if (embeddedInSheet) {
+        entryContent(PaddingValues())
+    } else {
+        SecondaryScaffold(
+            title = selectableLedgers.firstOrNull { it.id == ledgerId }?.name.orEmpty(),
+            backdrop = backdrop,
+            onBack = onBack,
+            collapsible = false,
+            onTitleClick = if (allowLedgerChange) ({ showLedgerPicker = true }) else null,
+            navigationIcon = MiuixIcons.Close,
+            navigationContentDescription = "关闭",
+            content = entryContent,
         )
     }
     ManualLedgerPickerSheet(

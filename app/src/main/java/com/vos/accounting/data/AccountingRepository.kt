@@ -144,6 +144,11 @@ class AccountingRepository(
         dao.updateNotificationPrivacyMode(mode)
     }
 
+    /** 更新小米超级岛通知样式开关。 */
+    suspend fun updateXiaomiSuperIslandEnabled(enabled: Boolean) {
+        dao.updateXiaomiSuperIslandEnabled(enabled)
+    }
+
     /** 更新本地 OCR 开关。 */
     suspend fun updateAutoLocalOcrEnabled(enabled: Boolean) = dao.updateAutoLocalOcrEnabled(enabled)
 

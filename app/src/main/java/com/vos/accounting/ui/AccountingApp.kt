@@ -19,10 +19,9 @@ import androidx.navigation3.ui.NavDisplay
 import androidx.navigation3.ui.NavDisplayTransitionEffects
 import com.vos.accounting.AccountingApplication
 import com.vos.accounting.auto.AutoBookkeepingNotificationManager
+import com.vos.accounting.auto.toEditableTransactionDraft
 import com.vos.accounting.model.AccountType
 import com.vos.accounting.data.LedgerEntity
-import com.vos.accounting.model.TransactionDraft
-import com.vos.accounting.model.TransactionSource
 import kotlinx.serialization.Serializable
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -461,6 +460,8 @@ fun AccountingApp(
                                 viewModel::updatePredictiveBackAnimationEnabled,
                             onColoredTransactionAmountsEnabledChange =
                                 viewModel::updateColoredTransactionAmountsEnabled,
+                            onXiaomiSuperIslandEnabledChange =
+                                viewModel::updateXiaomiSuperIslandEnabled,
                         )
                     }
                     entry<AutoBookkeepingSettingsRoute> {
@@ -517,19 +518,7 @@ fun AccountingApp(
                                         backStack.removeAt(backStack.lastIndex)
                                     }
                                 },
-                                initialDraft = TransactionDraft(
-                                    type = event.type,
-                                    amountMinor = event.amountMinor,
-                                    currencyKey = event.currencyKey,
-                                    accountAmountMinor = event.amountMinor,
-                                    accountId = event.accountId ?: 0L,
-                                    categoryId = event.categoryId,
-                                    merchant = event.merchant,
-                                    note = event.note,
-                                    occurredAt = event.occurredAt,
-                                    source = TransactionSource.AI,
-                                    ledgerId = event.ledgerId,
-                                ),
+                                initialDraft = event.toEditableTransactionDraft(),
                                 draftKey = event.id,
                                 allowLedgerChange = false,
                                 onSave = { draft, onSaved ->

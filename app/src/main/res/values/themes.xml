@@ -8,5 +8,12 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
     </style>
-</resources>
 
+    <style name="Theme.Accounting.Translucent" parent="Theme.Accounting">
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+    </style>
+</resources>

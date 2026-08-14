@@ -10,6 +10,7 @@ room = "2.8.4"
 serialization = "1.11.0"
 re2j = "1.8"
 paddleocr-ncnn = "v1.3.0"
+hyper-notification = "1.4"
 xposed-api = "102.0.0"
 coroutines = "1.10.2"
 miuix = "0.9.3"
@@ -32,6 +33,7 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 google-re2j = { module = "com.google.re2j:re2j", version.ref = "re2j" }
 paddleocr-ncnn = { module = "com.github.equationl.paddleocr4android:ncnnandroidppocr", version.ref = "paddleocr-ncnn" }
+hyper-notification-focus-api = { module = "com.xzakota.hyper.notification:focus-api", version.ref = "hyper-notification" }
 xposed-api = { module = "io.github.libxposed:api", version.ref = "xposed-api" }
 miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
 miuix-icons = { module = "top.yukonga.miuix.kmp:miuix-icons", version.ref = "miuix" }

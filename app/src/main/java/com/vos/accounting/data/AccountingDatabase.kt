@@ -285,6 +285,8 @@ data class AppSettingsEntity(
     val autoBookkeepingUnionPayEnabled: Boolean = true,
     @ColumnInfo(name = "notification_privacy_mode", defaultValue = "'HIDE_ON_LOCK_SCREEN'")
     val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+    @ColumnInfo(name = "xiaomi_super_island_enabled", defaultValue = "1")
+    val xiaomiSuperIslandEnabled: Boolean = true,
     @ColumnInfo(name = "auto_local_ocr_enabled", defaultValue = "0")
     val autoLocalOcrEnabled: Boolean = false,
     @ColumnInfo(name = "auto_root_ocr_enabled", defaultValue = "0")
@@ -802,6 +804,10 @@ interface AccountingDao {
     /** 更新账单通知的隐私展示策略。 */
     @Query("UPDATE app_settings SET notification_privacy_mode = :mode WHERE id = 1")
     suspend fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode)
+
+    /** 更新小米超级岛通知样式开关。 */
+    @Query("UPDATE app_settings SET xiaomi_super_island_enabled = :enabled WHERE id = 1")
+    suspend fun updateXiaomiSuperIslandEnabled(enabled: Boolean)
 
     /** 更新本地 OCR 开关。 */
     @Query("UPDATE app_settings SET auto_local_ocr_enabled = :enabled WHERE id = 1")
@@ -1776,7 +1782,7 @@ interface AccountingDao {
         AutoAiCredentialEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1814,6 +1820,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_18_19,
             MIGRATION_19_20,
             MIGRATION_20_21,
+            MIGRATION_21_22,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2722,6 +2729,15 @@ abstract class AccountingDatabase : RoomDatabase() {
                         updated_at INTEGER NOT NULL
                     )
                     """.trimIndent(),
+                )
+            }
+        }
+
+        internal val MIGRATION_21_22 = object : Migration(21, 22) {
+            /** 增加小米超级岛通知样式开关并保持已有行为默认开启。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN xiaomi_super_island_enabled INTEGER NOT NULL DEFAULT 1",
                 )
             }
         }

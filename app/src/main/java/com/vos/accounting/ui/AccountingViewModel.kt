@@ -70,6 +70,7 @@ data class AccountingUiState(
     val autoBookkeepingAlipayEnabled: Boolean = true,
     val autoBookkeepingUnionPayEnabled: Boolean = true,
     val notificationPrivacyMode: NotificationPrivacyMode = NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+    val xiaomiSuperIslandEnabled: Boolean = true,
     val autoLocalOcrEnabled: Boolean = false,
     val autoRootOcrEnabled: Boolean = false,
     val autoXposedEnabled: Boolean = false,
@@ -168,6 +169,7 @@ class AccountingViewModel(
             autoBookkeepingUnionPayEnabled = settings?.autoBookkeepingUnionPayEnabled ?: true,
             notificationPrivacyMode = settings?.notificationPrivacyMode
                 ?: NotificationPrivacyMode.HIDE_ON_LOCK_SCREEN,
+            xiaomiSuperIslandEnabled = settings?.xiaomiSuperIslandEnabled ?: true,
             autoLocalOcrEnabled = settings?.autoLocalOcrEnabled ?: false,
             autoRootOcrEnabled = settings?.autoRootOcrEnabled ?: false,
             autoXposedEnabled = settings?.autoXposedEnabled ?: false,
@@ -248,6 +250,11 @@ class AccountingViewModel(
     /** 更新自动账单通知的隐私展示方式。 */
     fun updateNotificationPrivacyMode(mode: NotificationPrivacyMode) {
         viewModelScope.launch { repository.updateNotificationPrivacyMode(mode) }
+    }
+
+    /** 更新小米超级岛通知样式开关。 */
+    fun updateXiaomiSuperIslandEnabled(enabled: Boolean) {
+        viewModelScope.launch { repository.updateXiaomiSuperIslandEnabled(enabled) }
     }
 
     /** 更新本地 OCR 开关。 */

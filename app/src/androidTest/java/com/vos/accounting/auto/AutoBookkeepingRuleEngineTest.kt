@@ -68,6 +68,30 @@ class AutoBookkeepingRuleEngineTest {
         assertTrue(capture?.externalKeyHash?.length == 64)
     }
 
+    /** 验证微信已收款转账详情可提取对象、金额、付款方式、单号和转账时间。 */
+    @Test
+    fun parsesWechatReceivedTransferFixture() = runBlocking {
+        val capture = engine.parse(
+            RuleInput(
+                packageName = WECHAT_PACKAGE,
+                source = AutoCaptureSource.ACCESSIBILITY,
+                occurredAt = 1000,
+                textParts = fixture("auto_bookkeeping_samples/wechat/accessibility/transfer_received.txt"),
+            ),
+        )
+        val expectedTime = LocalDateTime.parse("2026-08-12T20:52:08")
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+
+        assertEquals(TransactionType.EXPENSE, capture?.type)
+        assertEquals(5500L, capture?.amountMinor)
+        assertEquals("测试用户", capture?.merchant)
+        assertEquals("中国银行储蓄卡(3279)", capture?.paymentMethodKey)
+        assertEquals(expectedTime, capture?.occurredAt)
+        assertTrue(capture?.externalKeyHash?.length == 64)
+    }
+
     /** 验证 OCR 样本走相同规则而不是独立硬编码解析器。 */
     @Test
     fun parsesAlipayOcrFixture() = runBlocking {

@@ -1355,6 +1355,7 @@ fun SettingsScreen(
     onFollowSystemColorChange: (Boolean) -> Unit,
     onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
     onColoredTransactionAmountsEnabledChange: (Boolean) -> Unit,
+    onXiaomiSuperIslandEnabledChange: (Boolean) -> Unit,
 ) {
     var showThemePopup by rememberSaveable { mutableStateOf(false) }
     SecondaryScaffold(
@@ -1423,6 +1424,13 @@ fun SettingsScreen(
                         onCheckedChange = onColoredTransactionAmountsEnabledChange,
                         title = "收支金额颜色",
                         summary = "支出红色收入绿色",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    SwitchPreference(
+                        checked = uiState.xiaomiSuperIslandEnabled,
+                        onCheckedChange = onXiaomiSuperIslandEnabledChange,
+                        title = "小米超级岛",
+                        summary = "在支持的 HyperOS 3 设备上显示超级岛通知",
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

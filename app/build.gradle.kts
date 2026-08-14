@@ -95,6 +95,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.google.re2j)
     implementation(libs.paddleocr.ncnn)
+    implementation(libs.hyper.notification.focus.api)
     compileOnly(libs.xposed.api)
     implementation(libs.miuix.ui)
     implementation(libs.miuix.icons)
