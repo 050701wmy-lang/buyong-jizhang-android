@@ -1,6 +1,6 @@
-# 随记
+# 不用记帐
 
-随记是一个面向 Android 的本地优先记账应用，界面采用 Xiaomi HyperOS 风格的 MIUIX Compose Multiplatform 组件。
+不用记帐是一个面向 Android 的本地优先记账应用，界面采用 Xiaomi HyperOS 风格的 MIUIX Compose Multiplatform 组件。
 
 ## 当前功能
 

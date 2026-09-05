@@ -44,6 +44,7 @@ import com.vos.accounting.auto.AutoBookkeepingAccessibilityService
 import com.vos.accounting.auto.AutoBookkeepingNotificationListenerService
 import com.vos.accounting.auto.LocalOcrModels
 import com.vos.accounting.data.AutoBookkeepingEventEntity
+import com.vos.accounting.data.isReadyToConfirm
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionType
@@ -595,7 +596,7 @@ private fun AutoBookkeepingPendingRow(
         ) {
             Button(onClick = { onEdit(event.id) }, modifier = Modifier.weight(1f)) { Text("编辑") }
             Button(onClick = { onIgnore(event.id) }, modifier = Modifier.weight(1f)) { Text("忽略") }
-            if (event.canConfirm) {
+            if (event.isReadyToConfirm(uiState.autoAiAllowOneTapConfirm)) {
                 Button(
                     onClick = { onConfirm(event.id) },
                     modifier = Modifier.weight(1f),

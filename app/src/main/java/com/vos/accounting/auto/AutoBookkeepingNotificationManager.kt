@@ -12,6 +12,7 @@ import android.graphics.drawable.Icon
 import com.vos.accounting.R
 import com.vos.accounting.data.AccountingRepository
 import com.vos.accounting.data.AutoBookkeepingNotificationData
+import com.vos.accounting.data.isReadyToConfirm
 import com.vos.accounting.model.AutoBookkeepingStatus
 import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
@@ -42,7 +43,12 @@ class AutoBookkeepingNotificationManager(
         val settings = repository.getSettingsSnapshot()
         notificationManager.notify(
             notificationId(eventId),
-            buildNotification(data, settings.notificationPrivacyMode, settings.xiaomiSuperIslandEnabled),
+            buildNotification(
+                data = data,
+                privacyMode = settings.notificationPrivacyMode,
+                xiaomiSuperIslandEnabled = settings.xiaomiSuperIslandEnabled,
+                allowAiOneTapConfirm = settings.autoAiAllowOneTapConfirm,
+            ),
         )
     }
 
@@ -70,6 +76,7 @@ class AutoBookkeepingNotificationManager(
         data: AutoBookkeepingNotificationData,
         privacyMode: NotificationPrivacyMode,
         xiaomiSuperIslandEnabled: Boolean,
+        allowAiOneTapConfirm: Boolean,
     ): Notification {
         val event = data.event
         val generic = privacyMode == NotificationPrivacyMode.HIDE_DETAILS
@@ -85,7 +92,7 @@ class AutoBookkeepingNotificationManager(
             generic -> "点击查看并编辑"
             else -> notificationText(data)
         }
-        val confirmAction = if (!recorded && event.canConfirm) {
+        val confirmAction = if (!recorded && event.isReadyToConfirm(allowAiOneTapConfirm)) {
             Notification.Action.Builder(
                 null,
                 "确认入账",
@@ -95,7 +102,7 @@ class AutoBookkeepingNotificationManager(
             null
         }
         val builder = Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
             .setCategory(Notification.CATEGORY_STATUS)
             .setOnlyAlertOnce(true)
             .setAutoCancel(recorded)
@@ -130,7 +137,7 @@ class AutoBookkeepingNotificationManager(
                 builder.setVisibility(Notification.VISIBILITY_PRIVATE)
                 builder.setPublicVersion(
                     Notification.Builder(context, AUTO_BOOKKEEPING_CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_launcher_foreground)
+                        .setSmallIcon(R.drawable.ic_launcher_monochrome)
                         .setContentTitle(if (recorded) "检测到一笔已记录账单" else "检测到一笔待确认账单")
                         .setContentText("解锁后查看详情")
                         .build(),
@@ -150,8 +157,8 @@ class AutoBookkeepingNotificationManager(
         val showDetails = privacyMode != NotificationPrivacyMode.HIDE_DETAILS
         val status = if (recorded) "已记录" else "待确认"
         val title = if (showDetails) notificationTitle(data) else "账单$status"
-        val content = if (showDetails) notificationText(data) else "打开随记查看详情"
-        val islandAccount = if (showDetails) data.accountName ?: "待选账户" else "随记账单"
+        val content = if (showDetails) notificationText(data) else "打开不用记帐查看详情"
+        val islandAccount = if (showDetails) data.accountName ?: "待选账户" else "不用记帐待确认"
         val islandRight = if (showDetails && !recorded) {
             "${typeLabel(data.event.type)} ${formatAmount(data.event.amountMinor)}"
         } else {
@@ -200,7 +207,7 @@ class AutoBookkeepingNotificationManager(
                 picInfo {
                     type = 1
                     pic = appIcon
-                    contentDescription = "随记账单"
+                    contentDescription = "不用记帐待确认账单"
                 }
             }
             bigIslandArea {
@@ -209,7 +216,7 @@ class AutoBookkeepingNotificationManager(
                     picInfo {
                         type = 1
                         pic = appIcon
-                        contentDescription = "随记账单"
+                        contentDescription = "不用记帐待确认账单"
                     }
                     textInfo {
                         this.title = islandAccount

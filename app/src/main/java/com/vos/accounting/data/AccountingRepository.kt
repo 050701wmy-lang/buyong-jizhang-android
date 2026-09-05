@@ -306,6 +306,8 @@ class AccountingRepository(
         val aiCanConfirm = !aiAssisted || settings.autoAiAllowOneTapConfirm
         val incomingRuleHasPriority = existing == null || existing.ruleId == null ||
             autoSourcePriority(capture.source) > autoSourcePriority(defaultExistingSource)
+        val accountId = existing?.accountId ?: prediction.accountId
+        val categoryId = existing?.categoryId ?: prediction.categoryId
         val event = AutoBookkeepingEventEntity(
             id = matchedEvent?.id ?: 0,
             provider = capture.provider,
@@ -313,8 +315,8 @@ class AccountingRepository(
             type = mergedType,
             amountMinor = mergedAmount,
             currencyKey = capture.currencyKey,
-            accountId = existing?.accountId ?: prediction.accountId,
-            categoryId = existing?.categoryId ?: prediction.categoryId,
+            accountId = accountId,
+            categoryId = categoryId,
             merchant = mergedMerchant,
             note = capture.note.trim().ifEmpty { existing?.note.orEmpty() },
             occurredAt = minOf(existing?.occurredAt ?: capture.occurredAt, capture.occurredAt),
@@ -323,7 +325,8 @@ class AccountingRepository(
             externalKeyHash = capture.externalKeyHash ?: existing?.externalKeyHash,
             fingerprint = autoFingerprint(mergedCapture, mergedMerchantKey, mergedPaymentMethodKey),
             captureSources = mergedSources,
-            canConfirm = !hasConflict && aiCanConfirm && (existing?.canConfirm == true || prediction.canConfirm),
+            canConfirm = !hasConflict && aiCanConfirm && mergedAmount > 0 &&
+                accountId != null && categoryId != null && capture.occurredAt > 0,
             ledgerId = eventLedgerId,
             confirmedTransactionId = null,
             createdAt = existing?.createdAt ?: now,
@@ -369,7 +372,10 @@ class AccountingRepository(
     suspend fun confirmAutoBookkeepingEvent(eventId: Long): Long {
         val event = dao.findAutoBookkeepingEvent(eventId)
             ?: throw AccountingWriteException("待确认账单不存在")
-        if (!event.canConfirm) throw AccountingWriteException("请先补全账单信息")
+        val settings = dao.getSettings() ?: AppSettingsEntity()
+        if (!event.isReadyToConfirm(settings.autoAiAllowOneTapConfirm)) {
+            throw AccountingWriteException("请先补全账单信息")
+        }
         return confirmAutoBookkeepingEvent(eventId, event.toTransactionDraft(), learnMappings = false)
     }
 
@@ -843,7 +849,6 @@ class AccountingRepository(
         return AutoPrediction(
             accountId = accountId,
             categoryId = categoryId,
-            canConfirm = mappedAccount != null && categoryMapping != null,
         )
     }
 
@@ -851,7 +856,6 @@ class AccountingRepository(
     private data class AutoPrediction(
         val accountId: Long?,
         val categoryId: Long?,
-        val canConfirm: Boolean,
     )
 
     /** 承载一次用户确认需要与正式流水原子保存的学习映射。 */

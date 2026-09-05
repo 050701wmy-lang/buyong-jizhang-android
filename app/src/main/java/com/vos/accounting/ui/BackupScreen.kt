@@ -162,7 +162,7 @@ fun BackupRestoreScreen(
                 BackupPendingAction.CREATE -> {
                     onExport(password) { bytes ->
                         pendingExportBytes = bytes
-                        createLauncher.launch("随记备份_${backupTimeLabel()}.bak")
+                        createLauncher.launch("不用记帐备份_${backupTimeLabel()}.bak")
                     }
                 }
                 BackupPendingAction.RESTORE -> {

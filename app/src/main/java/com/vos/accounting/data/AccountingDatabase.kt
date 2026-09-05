@@ -454,6 +454,16 @@ data class AutoBookkeepingEventEntity(
     val aiAssisted: Boolean = false,
 )
 
+/** 判断待确认账单是否已具备安全执行一键入账所需的完整字段。 */
+fun AutoBookkeepingEventEntity.isReadyToConfirm(allowAiOneTapConfirm: Boolean): Boolean =
+    status == AutoBookkeepingStatus.PENDING &&
+        amountMinor > 0 &&
+        accountId != null &&
+        categoryId != null &&
+        occurredAt > 0 &&
+        !hasConflict &&
+        (!aiAssisted || allowAiOneTapConfirm)
+
 /** 记录用户确认后的商户与分类精确映射。 */
 @Entity(
     tableName = "auto_category_mappings",
