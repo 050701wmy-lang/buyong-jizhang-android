@@ -1446,7 +1446,7 @@ fun SettingsScreen(
                     insideMargin = PaddingValues(0.dp),
                 ) {
                     BasicComponent(
-                        title = "AI 记账",
+                        title = "自动记账",
                         summary = if (uiState.autoBookkeepingEnabled) "已开启" else "关闭",
                         modifier = Modifier.fillMaxWidth(),
                         endActions = {

@@ -107,7 +107,7 @@ fun AutoBookkeepingSettingsScreen(
     var ocrModelsInstalled by remember { mutableStateOf(ocrModels.isInstalled()) }
     var ocrDownloadInProgress by remember { mutableStateOf(false) }
     var ocrDownloadFailed by rememberSaveable { mutableStateOf(false) }
-    SecondaryScaffold(title = "AI 记账", backdrop = backdrop, onBack = onBack) { innerPadding ->
+    SecondaryScaffold(title = "自动记账", backdrop = backdrop, onBack = onBack) { innerPadding ->
         SecondaryList(innerPadding) {
             item { SectionTitle("功能") }
             item {
@@ -118,7 +118,7 @@ fun AutoBookkeepingSettingsScreen(
                     SwitchPreference(
                         checked = uiState.autoBookkeepingEnabled,
                         onCheckedChange = viewModel::updateAutoBookkeepingEnabled,
-                        title = "AI 记账",
+                        title = "自动记账",
                         summary = "支付后生成待确认草稿，不会直接写入正式账目",
                         modifier = Modifier.fillMaxWidth(),
                     )

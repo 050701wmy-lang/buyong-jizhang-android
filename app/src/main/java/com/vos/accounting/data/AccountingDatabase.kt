@@ -268,7 +268,7 @@ data class AppSettingsEntity(
     @ColumnInfo(name = "theme_mode")
     val themeMode: String = "SYSTEM",
     @ColumnInfo(name = "follow_system_color")
-    val followSystemColor: Boolean = true,
+    val followSystemColor: Boolean = false,
     @ColumnInfo(name = "predictive_back_animation_enabled", defaultValue = "0")
     val predictiveBackAnimationEnabled: Boolean = false,
     @ColumnInfo(name = "colored_transaction_amounts_enabled", defaultValue = "0")

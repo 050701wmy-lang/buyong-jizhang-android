@@ -62,7 +62,7 @@ data class AccountingUiState(
     val writeInProgress: Boolean = false,
     val writeError: String? = null,
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
-    val followSystemColor: Boolean = true,
+    val followSystemColor: Boolean = false,
     val predictiveBackAnimationEnabled: Boolean = false,
     val coloredTransactionAmountsEnabled: Boolean = false,
     val autoBookkeepingEnabled: Boolean = false,
@@ -160,7 +160,7 @@ class AccountingViewModel(
             themeMode = settings?.themeMode?.let { mode ->
                 AccountingThemeMode.entries.firstOrNull { it.name == mode }
             } ?: AccountingThemeMode.SYSTEM,
-            followSystemColor = settings?.followSystemColor ?: true,
+            followSystemColor = settings?.followSystemColor ?: false,
             predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
             coloredTransactionAmountsEnabled = settings?.coloredTransactionAmountsEnabled ?: false,
             autoBookkeepingEnabled = settings?.autoBookkeepingEnabled ?: false,
