@@ -1,5 +1,6 @@
 package com.vos.accounting.data
 
+import com.vos.accounting.auto.toEditableTransactionDraft
 import com.vos.accounting.model.MAX_AMOUNT_MINOR
 import com.vos.accounting.model.MAX_RATE_TO_CNY_SCALED
 import com.vos.accounting.model.AutoBookkeepingCapture
@@ -118,6 +119,11 @@ class AccountingRepository(
      */
     suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean) {
         dao.updatePredictiveBackAnimationEnabled(enabled)
+    }
+
+    /** 保存首页账本切换效果。 */
+    suspend fun updateLedgerAnimation(animation: String) {
+        dao.updateLedgerAnimation(animation)
     }
 
     /** 更新普通收支金额是否使用红绿字体。 */
@@ -463,25 +469,7 @@ class AccountingRepository(
         val original = dao.findTransaction(transactionId)
             ?: throw AccountingWriteException("账目不存在或已被删除")
         validateTransactionDraft(draft, original)
-        val snapshot = transactionSnapshot(draft)
-        val updated = dao.updateTransaction(
-            TransactionEntity(
-                id = transactionId,
-                type = draft.type,
-                amountMinor = draft.amountMinor,
-                accountAmountMinor = snapshot.accountAmountMinor,
-                accountId = draft.accountId,
-                categoryId = draft.categoryId,
-                merchant = draft.merchant.trim(),
-                note = draft.note.trim(),
-                occurredAt = draft.occurredAt,
-                source = draft.source,
-                ledgerId = draft.ledgerId,
-                currencyKey = snapshot.currencyKey,
-                baseAmountMinor = snapshot.baseAmountMinor,
-                baseCurrencyKey = snapshot.baseCurrencyKey,
-            ),
-        )
+        val updated = dao.updateTransaction(transactionEntity(draft).copy(id = transactionId))
         if (updated == 0) throw AccountingWriteException("账目不存在或已被删除")
     }
 
@@ -865,39 +853,30 @@ class AccountingRepository(
     )
 
     /** 把已经补全的自动账单事件转换为统一交易草稿。 */
-    private fun AutoBookkeepingEventEntity.toTransactionDraft(): TransactionDraft = TransactionDraft(
-        type = type,
-        amountMinor = amountMinor,
-        currencyKey = currencyKey,
-        accountAmountMinor = amountMinor,
-        accountId = requireNotNull(accountId),
-        categoryId = categoryId,
-        merchant = merchant,
-        note = note,
-        occurredAt = occurredAt,
-        source = TransactionSource.AI,
-        ledgerId = ledgerId,
-    )
+    private fun AutoBookkeepingEventEntity.toTransactionDraft(): TransactionDraft =
+        toEditableTransactionDraft().copy(accountId = requireNotNull(accountId))
 
     /** 把一个已校验草稿转换成单条收支账目。 */
-    private suspend fun transactionEntities(draft: TransactionDraft): List<TransactionEntity> {
+    private suspend fun transactionEntities(draft: TransactionDraft): List<TransactionEntity> =
+        listOf(transactionEntity(draft))
+
+    /** 使用统一金额快照把已校验草稿转换为可新建或更新的账目实体。 */
+    private suspend fun transactionEntity(draft: TransactionDraft): TransactionEntity {
         val snapshot = transactionSnapshot(draft)
-        return listOf(
-            TransactionEntity(
-                type = draft.type,
-                amountMinor = draft.amountMinor,
-                accountAmountMinor = snapshot.accountAmountMinor,
-                accountId = draft.accountId,
-                categoryId = draft.categoryId,
-                merchant = draft.merchant.trim(),
-                note = draft.note.trim(),
-                occurredAt = draft.occurredAt,
-                source = draft.source,
-                ledgerId = draft.ledgerId,
-                currencyKey = snapshot.currencyKey,
-                baseAmountMinor = snapshot.baseAmountMinor,
-                baseCurrencyKey = snapshot.baseCurrencyKey,
-            ),
+        return TransactionEntity(
+            type = draft.type,
+            amountMinor = draft.amountMinor,
+            accountAmountMinor = snapshot.accountAmountMinor,
+            accountId = draft.accountId,
+            categoryId = draft.categoryId,
+            merchant = draft.merchant.trim(),
+            note = draft.note.trim(),
+            occurredAt = draft.occurredAt,
+            source = draft.source,
+            ledgerId = draft.ledgerId,
+            currencyKey = snapshot.currencyKey,
+            baseAmountMinor = snapshot.baseAmountMinor,
+            baseCurrencyKey = snapshot.baseCurrencyKey,
         )
     }
 

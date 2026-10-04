@@ -713,6 +713,33 @@ class AccountingMigrationTest {
         migrated.close()
     }
 
+    /** 验证既有数据库升级后保留原动画默认值并支持持久化切换。 */
+    @Test
+    fun migrateVersionTwentyTwoToVersionTwentyThree() {
+        helper.createDatabase(DATABASE_NAME, 22).apply {
+            execSQL("INSERT INTO ledgers (id, name, cover_key, use_light_text, base_currency_key, is_hidden, sort_order) VALUES (1, '测试账本', 'cover_ocean', 1, 'cny', 0, 0)")
+            execSQL("INSERT INTO app_settings (id, theme_mode, follow_system_color, current_ledger_id) VALUES (1, 'SYSTEM', 0, 1)")
+            close()
+        }
+        val migrated = helper.runMigrationsAndValidate(
+            DATABASE_NAME,
+            23,
+            true,
+            AccountingDatabase.MIGRATION_22_23,
+        )
+        migrated.query("SELECT ledger_animation, current_ledger_id FROM app_settings WHERE id = 1").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("stack", it.getString(0))
+            assertEquals(1L, it.getLong(1))
+        }
+        migrated.execSQL("UPDATE app_settings SET ledger_animation = 'flip' WHERE id = 1")
+        migrated.query("SELECT ledger_animation FROM app_settings WHERE id = 1").use {
+            assertTrue(it.moveToFirst())
+            assertEquals("flip", it.getString(0))
+        }
+        migrated.close()
+    }
+
     /** 验证 v21 升级后小米超级岛开关默认开启。 */
     @Test
     fun migrateVersionTwentyOneToVersionTwentyTwo() {

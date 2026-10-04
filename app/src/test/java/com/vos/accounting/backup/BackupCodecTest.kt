@@ -166,6 +166,7 @@ class BackupCodecTest {
                 themeMode = "SYSTEM",
                 followSystemColor = true,
                 predictiveBackAnimationEnabled = false,
+                ledgerAnimation = "flip",
                 currentLedgerId = 1,
             ),
             media = emptyList(),
@@ -178,6 +179,7 @@ class BackupCodecTest {
         assertEquals(TransactionType.INCOME, restored.transactions.single().type)
         assertEquals(9L, restored.transactions.single().exchangeId)
         assertEquals(1, restored.settings?.currentLedgerId ?: 0)
+        assertEquals("flip", restored.settings?.ledgerAnimation)
         assertEquals(1, restored.accountLedgerCrossRefs.single().ledgerId)
     }
 

@@ -8,6 +8,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -26,10 +29,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -43,13 +49,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.delay
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -84,6 +91,8 @@ import top.yukonga.miuix.kmp.basic.ListPopupDefaults
 import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.window.WindowListPopup
 import kotlin.math.absoluteValue
+import kotlin.math.sin
+import kotlin.math.PI
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -149,6 +158,9 @@ private val LEDGER_STACK_FOREGROUND_TOP_INSET = 8.dp
 /** 账本叠放卡片释放后触发切换的拖动距离阈值，按卡片高度比例计。 */
 private const val LEDGER_STACK_SWITCH_THRESHOLD = 0.35f
 
+/** 双向拖动超出卡片高度的此比例后开始展开。 */
+internal const val LEDGER_STACK_EXPAND_THRESHOLD = 0.8f
+
 /** 账本叠放卡片快速甩动触发切换的速度阈值。 */
 private val LEDGER_STACK_FLING_VELOCITY = 400.dp
 
@@ -186,7 +198,7 @@ private const val LEDGER_STACK_BACKGROUND_DIM_ALPHA = 0.42f
 private const val LEDGER_STACK_DEFAULT_DIRECTION = 1
 
 /** 单个账本封面页面需要展示的资产汇总数据。 */
-private data class LedgerAssetSummary(
+internal data class LedgerAssetSummary(
     val netAssets: Long,
     val totalAssets: Long,
     val totalLiabilities: Long,
@@ -231,6 +243,8 @@ fun HomeScreen(
     innerPadding: PaddingValues,
     onOpenAccount: (Long) -> Unit,
     onSelectLedger: (Long) -> Unit,
+    onTitleOcclusionChange: (Float) -> Unit = {},
+    active: Boolean = true,
 ) {
     val activeAccounts = uiState.accounts.filterNot(AccountEntity::isArchived)
     val accountBalances = remember(activeAccounts, uiState.accountBalances) {
@@ -311,32 +325,37 @@ fun HomeScreen(
         it.id in accountIdsByLedger[displayedLedgerId].orEmpty()
     }
 
-    MainTabList(innerPadding = innerPadding) {
-        item {
-            HomeLedgerStack(
-                ledgers = availableLedgers,
-                currentLedgerId = displayedLedgerId,
-                ledgerSummaries = ledgerSummaries,
-                onSelectLedger = selectDisplayedLedger,
-            )
-        }
-        if (displayedAccounts.isEmpty()) {
-            item { EmptyCard(text = "当前账本暂无账户") }
-        } else {
-            uiState.accountTypes.forEach { type ->
-                val accounts = displayedAccounts.filter { it.typeKey == type.key }
-                if (accounts.isNotEmpty()) {
-                    item(key = type.key) {
-                        HomeAccountGroup(
-                            modifier = Modifier.animateItem(),
-                            type = type,
-                            accounts = accounts,
-                            balances = accountBalances,
-                            cnyBalances = cnyBalances,
-                            currencies = currencies,
-                            baseCurrency = baseCurrency,
-                            onOpenAccount = onOpenAccount,
-                        )
+    LedgerExpansionHost(availableLedgers, ledgerSummaries, selectDisplayedLedger, active = active, onTitleOcclusionChange = onTitleOcclusionChange) { expansion ->
+        MainTabList(innerPadding = innerPadding) {
+            item {
+                HomeLedgerStack(
+                    ledgers = availableLedgers,
+                    currentLedgerId = displayedLedgerId,
+                    ledgerSummaries = ledgerSummaries,
+                    onSelectLedger = selectDisplayedLedger,
+                    animation = uiState.ledgerAnimation,
+                    expansion = expansion,
+                    active = active,
+                )
+            }
+            if (displayedAccounts.isEmpty()) {
+                item { EmptyCard(text = "当前账本暂无账户") }
+            } else {
+                uiState.accountTypes.forEach { type ->
+                    val accounts = displayedAccounts.filter { it.typeKey == type.key }
+                    if (accounts.isNotEmpty()) {
+                        item(key = type.key) {
+                            HomeAccountGroup(
+                                modifier = Modifier.animateItem(),
+                                type = type,
+                                accounts = accounts,
+                                balances = accountBalances,
+                                cnyBalances = cnyBalances,
+                                currencies = currencies,
+                                baseCurrency = baseCurrency,
+                                onOpenAccount = onOpenAccount,
+                            )
+                        }
                     }
                 }
             }
@@ -362,17 +381,24 @@ private fun ledgerStackTransition(
 
 /** 通过完整账本卡片的小幅换层、缩放和叠化切换相邻账本。 */
 @Composable
-private fun HomeLedgerStack(
+internal fun HomeLedgerStack(
     ledgers: List<LedgerRecord>,
     currentLedgerId: Long,
     ledgerSummaries: Map<Long, LedgerAssetSummary>,
     onSelectLedger: (Long) -> Unit,
+    animation: String = "stack",
+    preview: Boolean = false,
+    expansion: LedgerExpansionState,
+    active: Boolean = true,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val settleProgress = remember { Animatable(0f) }
     var phase by remember { mutableStateOf(LedgerStackPhase.IDLE) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
+    var dragDistance by remember { mutableFloatStateOf(0f) }
+    var dragStartProgress by remember { mutableFloatStateOf(0f) }
+    var upwardExpandDistance by remember { mutableFloatStateOf(0f) }
     var settledLedgerId by remember { mutableLongStateOf(currentLedgerId) }
     var optimisticLedgerId by remember { mutableStateOf<Long?>(null) }
     var transition by remember { mutableStateOf<LedgerStackTransition?>(null) }
@@ -380,7 +406,28 @@ private fun HomeLedgerStack(
     var settleJob by remember { mutableStateOf<Job?>(null) }
     val latestLedgers by rememberUpdatedState(ledgers)
     val latestOnSelectLedger by rememberUpdatedState(onSelectLedger)
+    val latestActive by rememberUpdatedState(active)
     val multipleLedgers = ledgers.size > 1
+    val flip = animation == "flip"
+    var restingDirection by remember { mutableIntStateOf(1) }
+    var pressed by remember { mutableStateOf(false) }
+    val reveal by animateFloatAsState(
+        targetValue = if (flip && active && (pressed || phase != LedgerStackPhase.IDLE)) 1f else 0f,
+        animationSpec = folmeSpring(damping = 1f, response = 0.25f, visibilityThreshold = 0.001f),
+        label = "ledger_fan_reveal",
+    )
+
+    LaunchedEffect(active) {
+        if (!active) {
+            motionEpoch += 1
+            settleJob?.cancel()
+            settleJob = null
+            pressed = false
+            dragProgress = 0f
+            transition = null
+            phase = LedgerStackPhase.IDLE
+        }
+    }
 
     LaunchedEffect(currentLedgerId, ledgers, phase) {
         if (optimisticLedgerId == currentLedgerId) {
@@ -398,15 +445,20 @@ private fun HomeLedgerStack(
                     phase = LedgerStackPhase.SETTLING
                     settleProgress.animateTo(
                         targetValue = targetProgress,
-                        animationSpec = tween(
-                            durationMillis = if (targetProgress == 0f) 180 else 220,
-                            easing = FastOutSlowInEasing,
-                        ),
+                        animationSpec = if (flip) {
+                            folmeSpring(damping = 1f, response = if (preview) 0.8f else 0.45f, visibilityThreshold = 0.001f)
+                        } else {
+                            tween(
+                                durationMillis = if (preview) 700 else if (targetProgress == 0f) 180 else 220,
+                                easing = FastOutSlowInEasing,
+                            )
+                        },
                         initialVelocity = initialVelocity,
                     )
                     if (epoch != motionEpoch) return@launch
                     val targetLedgerId = if (targetProgress == 0f) null else transitionAtRelease?.toLedgerId
                     if (targetLedgerId != null) {
+                        restingDirection = if (targetProgress > 0f) -1 else 1
                         settledLedgerId = targetLedgerId
                         optimisticLedgerId = targetLedgerId
                         latestOnSelectLedger(targetLedgerId)
@@ -422,9 +474,36 @@ private fun HomeLedgerStack(
             }
         }
 
+    LaunchedEffect(preview, animation) {
+        if (preview && multipleLedgers) {
+            var cycle = 0
+            while (true) {
+                delay(1600)
+                if (phase == LedgerStackPhase.IDLE && !expansion.visible) {
+                    val previewStep = cycle++ % 4
+                    if (flip && previewStep == 0) {
+                        pressed = true
+                        delay(450)
+                        pressed = false
+                    } else if (previewStep == 3) {
+                        expansion.begin(settledLedgerId, effect = animation)
+                        expansion.settle(scope, 1f)
+                        delay(1400)
+                        expansion.settle(scope, 0f)
+                    } else {
+                        motionEpoch += 1
+                        transition = ledgerStackTransition(latestLedgers, settledLedgerId, -1)
+                        settleTo(0f, -1f, 0f, transition, motionEpoch)
+                    }
+                }
+            }
+        }
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
+            .zIndex(if (flip) 1f else 0f)
             .then(
                 if (multipleLedgers) {
                     Modifier.alignLedgerStackForegroundWithHero()
@@ -437,33 +516,58 @@ private fun HomeLedgerStack(
         val cardWidthPx = constraints.maxWidth - horizontalPaddingPx * 2f
         val cardHeightPx = cardWidthPx / LEDGER_HERO_ASPECT_RATIO
         val peekPx = with(density) { LEDGER_STACK_FOREGROUND_TOP_INSET.toPx() }
-        val incomingOffsetPx = with(density) { LEDGER_STACK_INCOMING_OFFSET.toPx() }
-        val outgoingOffsetPx = with(density) { LEDGER_STACK_OUTGOING_OFFSET.toPx() }
         val backgroundOffsetPx = with(density) { LEDGER_STACK_BACKGROUND_OFFSET.toPx() }
         val motionViewportBottomPx = with(density) { LEDGER_STACK_MOTION_VIEWPORT_BOTTOM.toPx() }
         val stackHeightPx = cardHeightPx + motionViewportBottomPx + if (multipleLedgers) peekPx else 0f
         val flingVelocityPx = with(density) { LEDGER_STACK_FLING_VELOCITY.toPx() }
+        val statusBarTop = WindowInsets.statusBars.getTop(density)
+        val upwardTravelPx = (expansion.sourceBounds.top + peekPx - statusBarTop - with(density) { 12.dp.toPx() })
+            .coerceAtLeast(0f)
+        SideEffect { expansion.upwardTravelPx = upwardTravelPx }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(with(density) { stackHeightPx.toDp() })
-                .clipToBounds()
-                .pointerInput(cardHeightPx, multipleLedgers, flingVelocityPx) {
-                    if (!multipleLedgers) return@pointerInput
+                .onGloballyPositioned { expansion.sourceBounds = it.ledgerMotionBounds() }
+                .graphicsLayer { alpha = if (expansion.visible) 0f else 1f }
+                .pointerInput(flip, multipleLedgers, active) {
+                    if (!flip || !multipleLedgers || preview || !active) return@pointerInput
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        pressed = true
+                        try {
+                            waitForUpOrCancellation()
+                        } finally {
+                            pressed = false
+                        }
+                    }
+                }
+                .pointerInput(cardHeightPx, multipleLedgers, flingVelocityPx, animation, active) {
+                    if (!multipleLedgers || preview || !active) return@pointerInput
                     val velocityTracker = VelocityTracker()
                     detectVerticalDragGestures(
-                        onDragStart = {
+                        onDragStart = { position ->
                             velocityTracker.resetTracking()
                             motionEpoch += 1
                             settleJob?.cancel()
                             settleJob = null
-                            dragProgress = settleProgress.value
+                            dragProgress = if (phase == LedgerStackPhase.SETTLING) settleProgress.value else 0f
+                            dragStartProgress = dragProgress
+                            dragDistance = 0f
+                            upwardExpandDistance = minOf(
+                                LEDGER_EXPAND_DRAG_DISTANCE,
+                                (expansion.sourceBounds.top + position.y - statusBarTop) * 0.88f / cardHeightPx,
+                            )
                             phase = LedgerStackPhase.DRAGGING
                         },
                         onVerticalDrag = { change, dragAmount ->
                             change.consume()
+                            if (expansion.visible) return@detectVerticalDragGestures
                             velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            val nextProgress = (dragProgress + dragAmount / cardHeightPx).coerceIn(-1f, 1f)
+                            dragDistance += dragAmount / cardHeightPx
+                            val nextProgress = (dragStartProgress + if (flip) {
+                                ledgerDragProgress(dragDistance)
+                            } else dragDistance * LEDGER_STACK_EXPAND_THRESHOLD / LEDGER_EXPAND_DRAG_DISTANCE).coerceIn(-1f, 1f)
                             val direction = when {
                                 nextProgress > 0f -> 1
                                 nextProgress < 0f -> -1
@@ -480,13 +584,32 @@ private fun HomeLedgerStack(
                                 }
                             }
                             dragProgress = nextProgress
+                            val expandDistance = if (dragDistance < 0f) upwardExpandDistance else LEDGER_EXPAND_DRAG_DISTANCE
+                            if (dragDistance.absoluteValue >= expandDistance) {
+                                val motions = if (flip) ledgerFlipDeckMotions(
+                                    latestLedgers, settledLedgerId, transition?.toLedgerId,
+                                    nextProgress.absoluteValue, direction, restingDirection,
+                                    cardHeightPx, density.density, upwardTravelPx, reveal,
+                                ) else emptyMap()
+                                expansion.begin(
+                                    settledLedgerId, transition?.toLedgerId, direction, animation,
+                                    nextProgress.absoluteValue, motions,
+                                )
+                                expansion.settle(scope, 1f)
+                            }
                         },
                         onDragEnd = {
                             val velocity = velocityTracker.calculateVelocity().y
+                            if (expansion.visible) {
+                                dragProgress = 0f
+                                transition = null
+                                phase = LedgerStackPhase.IDLE
+                                return@detectVerticalDragGestures
+                            }
                             val target = when {
-                                dragProgress > LEDGER_STACK_SWITCH_THRESHOLD ||
+                                (dragDistance.absoluteValue > LEDGER_STACK_SWITCH_THRESHOLD && dragProgress > 0f) ||
                                     (dragProgress > 0f && velocity >= flingVelocityPx) -> 1f
-                                dragProgress < -LEDGER_STACK_SWITCH_THRESHOLD ||
+                                (dragDistance.absoluteValue > LEDGER_STACK_SWITCH_THRESHOLD && dragProgress < 0f) ||
                                     (dragProgress < 0f && velocity <= -flingVelocityPx) -> -1f
                                 else -> 0f
                             }
@@ -508,12 +631,20 @@ private fun HomeLedgerStack(
                             settleTo(
                                 dragProgress,
                                 target,
-                                velocity / cardHeightPx,
+                                (velocity / cardHeightPx * if (flip) ledgerDragProgressSlope(dragDistance)
+                                else LEDGER_STACK_EXPAND_THRESHOLD / LEDGER_EXPAND_DRAG_DISTANCE).coerceIn(-3f, 3f),
                                 transitionAtRelease,
                                 motionEpoch,
                             )
                         },
                         onDragCancel = {
+                            if (!latestActive) return@detectVerticalDragGestures
+                            if (expansion.visible) {
+                                expansion.settle(scope, 0f) {
+                                    settleTo(dragProgress, 0f, 0f, transition, motionEpoch)
+                                }
+                                return@detectVerticalDragGestures
+                            }
                             settleTo(
                                 dragProgress,
                                 0f,
@@ -531,7 +662,14 @@ private fun HomeLedgerStack(
                 LedgerStackPhase.IDLE -> 0f
             }
             val activeTransition = transition
-            val motionProgress = if (activeTransition == null) 0f else signedProgress.absoluteValue
+            SideEffect {
+                expansion.animation = animation
+                expansion.restingDirection = if (flip) restingDirection else 1
+                expansion.switchOcclusion = if (flip && activeTransition != null) {
+                    (sin(signedProgress.absoluteValue.coerceAtMost(1f) * PI.toFloat()) * 5f).coerceIn(0f, 1f)
+                } else 0f
+            }
+            val motionProgress = if (activeTransition == null) 0f else signedProgress.absoluteValue.coerceAtMost(1f)
             val currentLedger = ledgers.firstOrNull {
                 it.id == (activeTransition?.fromLedgerId ?: settledLedgerId)
             } ?: ledgers.first()
@@ -572,165 +710,240 @@ private fun HomeLedgerStack(
             val backgroundHandoffTranslation = motionDirection * backgroundOffsetPx *
                 motionProgress * (1f - motionProgress)
 
-            if (multipleLedgers && activeTransition == null) {
-                if (farBackgroundLedger != null && ledgers.size > 2) {
-                    LedgerHeroCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .zIndex(0f)
-                            .graphicsLayer {
-                                scaleX = LEDGER_STACK_FAR_BACKGROUND_SCALE
-                                scaleY = LEDGER_STACK_FAR_BACKGROUND_SCALE
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA
-                            },
-                        ledger = farBackgroundLedger,
-                        summary = ledgerSummaries.getValue(farBackgroundLedger.id),
-                        contentAlpha = 0f,
-                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                    )
-                }
-                if (nearBackgroundLedger != null) {
-                    LedgerHeroCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
-                            .zIndex(1f)
-                            .graphicsLayer {
-                                scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
-                                scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA
-                            },
-                        ledger = nearBackgroundLedger,
-                        summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
-                        contentAlpha = 0f,
-                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                    )
-                }
-            } else if (multipleLedgers) {
-                if (replenishingBackgroundLedger != null) {
-                    LedgerHeroCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .zIndex(0f)
-                            .graphicsLayer {
-                                scaleX = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
-                                    (LEDGER_STACK_FAR_BACKGROUND_SCALE -
-                                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
-                                scaleY = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
-                                    (LEDGER_STACK_FAR_BACKGROUND_SCALE -
-                                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                translationY = backgroundHandoffTranslation * 0.5f
-                                alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA * motionProgress
-                            },
-                        ledger = replenishingBackgroundLedger,
-                        summary = ledgerSummaries.getValue(replenishingBackgroundLedger.id),
-                        contentAlpha = 0f,
-                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                    )
-                }
-                if (promotingBackgroundLedger != null) {
-                    val startsFromFarLayer = ledgers.size > 2
-                    val startScale = if (startsFromFarLayer) {
-                        LEDGER_STACK_FAR_BACKGROUND_SCALE
-                    } else {
-                        LEDGER_STACK_PREWARM_BACKGROUND_SCALE
+            if (flip) {
+                LedgerFlipDeck(
+                    ledgers = ledgers,
+                    sourceId = currentLedger.id,
+                    targetId = activeTransition?.toLedgerId,
+                    summaries = ledgerSummaries,
+                    progress = motionProgress,
+                    direction = motionDirection.toInt(),
+                    restingDirection = restingDirection,
+                    cardHeightPx = cardHeightPx,
+                    upwardTravelPx = upwardTravelPx,
+                    reveal = reveal,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                        .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp),
+                )
+            } else {
+                if (multipleLedgers && activeTransition == null) {
+                    if (farBackgroundLedger != null && ledgers.size > 2) {
+                        LedgerHeroCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .zIndex(0f)
+                                .graphicsLayer {
+                                    scaleX = LEDGER_STACK_FAR_BACKGROUND_SCALE
+                                    scaleY = LEDGER_STACK_FAR_BACKGROUND_SCALE
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                    alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA
+                                },
+                            ledger = farBackgroundLedger,
+                            summary = ledgerSummaries.getValue(farBackgroundLedger.id),
+                            contentAlpha = 0f,
+                            depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                        )
                     }
-                    val startAlpha = if (startsFromFarLayer) {
-                        LEDGER_STACK_FAR_BACKGROUND_ALPHA
-                    } else {
-                        0f
+                    if (nearBackgroundLedger != null) {
+                        LedgerHeroCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
+                                .zIndex(1f)
+                                .graphicsLayer {
+                                    scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                    scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                    alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA
+                                },
+                            ledger = nearBackgroundLedger,
+                            summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
+                            contentAlpha = 0f,
+                            depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                        )
                     }
-                    LedgerHeroCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .zIndex(0.5f)
-                            .graphicsLayer {
-                                scaleX = startScale +
-                                    (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
-                                scaleY = startScale +
-                                    (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                translationY = backgroundOffsetPx * motionProgress + backgroundHandoffTranslation
-                                alpha = startAlpha +
-                                    (LEDGER_STACK_NEAR_BACKGROUND_ALPHA - startAlpha) * motionProgress
-                            },
-                        ledger = promotingBackgroundLedger,
-                        summary = ledgerSummaries.getValue(promotingBackgroundLedger.id),
-                        contentAlpha = 0f,
-                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                    )
+                } else if (multipleLedgers) {
+                    if (replenishingBackgroundLedger != null) {
+                        LedgerHeroCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .zIndex(0f)
+                                .graphicsLayer {
+                                    scaleX = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
+                                        (LEDGER_STACK_FAR_BACKGROUND_SCALE -
+                                            LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
+                                    scaleY = LEDGER_STACK_PREWARM_BACKGROUND_SCALE +
+                                        (LEDGER_STACK_FAR_BACKGROUND_SCALE -
+                                            LEDGER_STACK_PREWARM_BACKGROUND_SCALE) * motionProgress
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                    translationY = backgroundHandoffTranslation * 0.5f
+                                    alpha = LEDGER_STACK_FAR_BACKGROUND_ALPHA * motionProgress
+                                },
+                            ledger = replenishingBackgroundLedger,
+                            summary = ledgerSummaries.getValue(replenishingBackgroundLedger.id),
+                            contentAlpha = 0f,
+                            depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                        )
+                    }
+                    if (promotingBackgroundLedger != null) {
+                        val startsFromFarLayer = ledgers.size > 2
+                        val startScale = if (startsFromFarLayer) {
+                            LEDGER_STACK_FAR_BACKGROUND_SCALE
+                        } else {
+                            LEDGER_STACK_PREWARM_BACKGROUND_SCALE
+                        }
+                        val startAlpha = if (startsFromFarLayer) {
+                            LEDGER_STACK_FAR_BACKGROUND_ALPHA
+                        } else {
+                            0f
+                        }
+                        LedgerHeroCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .zIndex(0.5f)
+                                .graphicsLayer {
+                                    scaleX = startScale +
+                                        (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
+                                    scaleY = startScale +
+                                        (LEDGER_STACK_NEAR_BACKGROUND_SCALE - startScale) * motionProgress
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                    translationY = backgroundOffsetPx * motionProgress + backgroundHandoffTranslation
+                                    alpha = startAlpha +
+                                        (LEDGER_STACK_NEAR_BACKGROUND_ALPHA - startAlpha) * motionProgress
+                                },
+                            ledger = promotingBackgroundLedger,
+                            summary = ledgerSummaries.getValue(promotingBackgroundLedger.id),
+                            contentAlpha = 0f,
+                            depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                        )
+                    }
+                    if (nearBackgroundLedger != null) {
+                        LedgerHeroCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
+                                .zIndex(1f)
+                                .graphicsLayer {
+                                    scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                    scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f)
+                                    translationY = backgroundHandoffTranslation
+                                    alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA * (1f - motionProgress)
+                                },
+                            ledger = nearBackgroundLedger,
+                            summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
+                            contentAlpha = 0f,
+                            depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
+                        )
+                    }
                 }
-                if (nearBackgroundLedger != null) {
-                    LedgerHeroCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .padding(top = LEDGER_STACK_BACKGROUND_OFFSET)
-                            .zIndex(1f)
-                            .graphicsLayer {
-                                scaleX = LEDGER_STACK_NEAR_BACKGROUND_SCALE
-                                scaleY = LEDGER_STACK_NEAR_BACKGROUND_SCALE
-                                transformOrigin = TransformOrigin(0.5f, 0.5f)
-                                translationY = backgroundHandoffTranslation
-                                alpha = LEDGER_STACK_NEAR_BACKGROUND_ALPHA * (1f - motionProgress)
-                            },
-                        ledger = nearBackgroundLedger,
-                        summary = ledgerSummaries.getValue(nearBackgroundLedger.id),
-                        contentAlpha = 0f,
-                        depthDimAlpha = LEDGER_STACK_BACKGROUND_DIM_ALPHA,
-                    )
-                }
-            }
-            LedgerHeroCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
-                    .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp)
-                    .zIndex(3f)
-                    .graphicsLayer {
-                        scaleX = 1f + (LEDGER_STACK_OUTGOING_SCALE - 1f) * motionProgress
-                        scaleY = 1f + (LEDGER_STACK_OUTGOING_SCALE - 1f) * motionProgress
-                        transformOrigin = TransformOrigin(0.5f, 0.5f)
-                        translationY = motionDirection * outgoingOffsetPx * motionProgress
-                        alpha = 1f - motionProgress
-                    },
-                ledger = currentLedger,
-                summary = ledgerSummaries.getValue(currentLedger.id),
-            )
-            if (incomingLedger != null) {
                 LedgerHeroCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
                         .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp)
-                        .zIndex(2f)
+                        .zIndex(3f)
                         .graphicsLayer {
-                            scaleX = LEDGER_STACK_INCOMING_SCALE +
-                                (1f - LEDGER_STACK_INCOMING_SCALE) * motionProgress
-                            scaleY = LEDGER_STACK_INCOMING_SCALE +
-                                (1f - LEDGER_STACK_INCOMING_SCALE) * motionProgress
-                            transformOrigin = TransformOrigin(0.5f, 0.5f)
-                            translationY = -motionDirection * incomingOffsetPx * (1f - motionProgress)
-                            alpha = motionProgress
+                            val motion = ledgerSwitchMotion(motionProgress, motionDirection.toInt(), animation, false, cardHeightPx, density.density)
+                            scaleX = motion.scale
+                            scaleY = motion.scale
+                            translationY = motion.translationY
+                            rotationX = motion.rotationX
+                            rotationZ = motion.rotationZ
+                            cameraDistance = cardHeightPx * 8f
+                            alpha = motion.alpha
                         },
-                    ledger = incomingLedger,
-                    summary = ledgerSummaries.getValue(incomingLedger.id),
+                    ledger = currentLedger,
+                    summary = ledgerSummaries.getValue(currentLedger.id),
                 )
+                if (incomingLedger != null) {
+                    LedgerHeroCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp)
+                            .padding(top = if (multipleLedgers) LEDGER_STACK_FOREGROUND_TOP_INSET else 0.dp)
+                            .zIndex(if (flip) 4f else 2f)
+                            .graphicsLayer {
+                                val motion = ledgerSwitchMotion(motionProgress, motionDirection.toInt(), animation, true, cardHeightPx, density.density)
+                                scaleX = motion.scale
+                                scaleY = motion.scale
+                                translationY = motion.translationY
+                                rotationX = motion.rotationX
+                                rotationZ = motion.rotationZ
+                                cameraDistance = cardHeightPx * 8f
+                                alpha = motion.alpha
+                            },
+                        ledger = incomingLedger,
+                        summary = ledgerSummaries.getValue(incomingLedger.id),
+                    )
+                }
             }
         }
     }
 }
 
+/** 计算切换中的完整卡片姿态，供首页与展开衔接共同使用。 */
+internal fun ledgerSwitchMotion(
+    progress: Float,
+    direction: Int,
+    animation: String,
+    incoming: Boolean,
+    cardHeightPx: Float,
+    density: Float,
+    upwardTravelPx: Float = cardHeightPx,
+): LedgerCardMotion {
+    if (animation == "flip") {
+        val p = progress.coerceIn(0f, 1f)
+        val arc = sin(p * PI.toFloat()).coerceAtLeast(0f)
+        val returnProgress = ((p - 0.5f) * 2f).coerceIn(0f, 1f)
+        val separation = cardHeightPx * 1.24f
+        val upperTravel = minOf(cardHeightPx * 1.08f, upwardTravelPx)
+        val incomingTravel = if (direction > 0) -upperTravel else separation - upperTravel
+        val outgoingTravel = if (direction > 0) separation - upperTravel else -upperTravel
+        return if (incoming) {
+            LedgerCardMotion(
+                scale = 0.986f + 0.014f * p,
+                translationY = -4f * density * (1f - p) + incomingTravel * arc,
+                rotationX = direction * 4f * arc,
+                rotationZ = direction * 3f * arc,
+                zIndex = if (p < 0.5f) 2f else 3f,
+                contentAlpha = (p * 6f).coerceAtMost(1f),
+            )
+        } else {
+            LedgerCardMotion(
+                scale = 1f - 0.014f * returnProgress,
+                translationY = outgoingTravel * arc - 4f * density * returnProgress,
+                rotationX = -direction * 2f * arc,
+                rotationZ = -direction * 1.2f * arc,
+                zIndex = if (p < 0.5f) 3f else 2f,
+                contentAlpha = 1f - returnProgress,
+            )
+        }
+    }
+
+    return if (incoming) {
+        LedgerCardMotion(
+            scale = LEDGER_STACK_INCOMING_SCALE + (1f - LEDGER_STACK_INCOMING_SCALE) * progress,
+            translationY = -direction * LEDGER_STACK_INCOMING_OFFSET.value * density * (1f - progress),
+            alpha = progress,
+        )
+    } else {
+        LedgerCardMotion(
+            scale = 1f + (LEDGER_STACK_OUTGOING_SCALE - 1f) * progress,
+            translationY = direction * LEDGER_STACK_OUTGOING_OFFSET.value * density * progress,
+            alpha = 1f - progress,
+        )
+    }
+}
+
 /** 绘制可随账本层级整体移动、缩放和淡化的完整 Hero Card。 */
 @Composable
-private fun LedgerHeroCard(
+internal fun LedgerHeroCard(
     modifier: Modifier = Modifier,
     ledger: LedgerRecord,
     summary: LedgerAssetSummary,
@@ -1351,6 +1564,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAutoBookkeeping: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenLedgerAnimation: () -> Unit,
     onThemeModeChange: (AccountingThemeMode) -> Unit,
     onFollowSystemColorChange: (Boolean) -> Unit,
     onPredictiveBackAnimationEnabledChange: (Boolean) -> Unit,
@@ -1418,6 +1632,25 @@ fun SettingsScreen(
                         title = "预测性返回动画",
                         summary = "开启后边缘返回会随手势移动",
                         modifier = Modifier.fillMaxWidth(),
+                    )
+                    BasicComponent(
+                        title = "账本切换动画",
+                        onClick = onOpenLedgerAnimation,
+                        endActions = {
+                            Row(Modifier.height(35.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    ledgerAnimationTitle(uiState.ledgerAnimation),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.body2,
+                                )
+                                Icon(
+                                    MiuixIcons.Basic.ArrowRight,
+                                    contentDescription = null,
+                                    modifier = Modifier.padding(start = 8.dp).size(10.dp, 16.dp),
+                                    tint = MiuixTheme.colorScheme.onSurfaceVariantActions,
+                                )
+                            }
+                        },
                     )
                     SwitchPreference(
                         checked = uiState.coloredTransactionAmountsEnabled,

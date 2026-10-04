@@ -20,6 +20,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -255,6 +256,7 @@ private fun MainScaffold(
 ) {
     val scrollBehavior = MiuixScrollBehavior()
     var mainViewportWidth by remember { mutableIntStateOf(0) }
+    var ledgerTitleOcclusion by remember { mutableFloatStateOf(0f) }
     val pagerState = if (isWide) {
         null
     } else {
@@ -275,7 +277,12 @@ private fun MainScaffold(
             .onSizeChanged { mainViewportWidth = it.width }
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
-            AccountingBlurTopBar(backdrop = backdrop) {
+            AccountingBlurTopBar(
+                backdrop = backdrop,
+                modifier = Modifier.graphicsLayer {
+                    alpha = if (!isWide && activeTab == MainTab.HOME) 1f - ledgerTitleOcclusion else 1f
+                },
+            ) {
                 if (isWide) {
                     SmallTopAppBar(
                         title = activeTab.topBarTitle,
@@ -391,6 +398,7 @@ private fun MainScaffold(
                         onOpenAccount = onOpenAccount,
                         onOpenTransactionEdit = onOpenTransactionEdit,
                         onSelectLedger = onSelectLedger,
+                    onTitleOcclusionChange = { ledgerTitleOcclusion = it },
                     )
                 }
             } else {
@@ -402,6 +410,7 @@ private fun MainScaffold(
                     onOpenAccount = onOpenAccount,
                     onOpenTransactionEdit = onOpenTransactionEdit,
                     onSelectLedger = onSelectLedger,
+                    onTitleOcclusionChange = { ledgerTitleOcclusion = it },
                 )
             }
         }
@@ -420,6 +429,7 @@ private fun MainTabPager(
     onOpenAccount: (Long) -> Unit,
     onOpenTransactionEdit: (Long) -> Unit,
     onSelectLedger: (Long) -> Unit,
+    onTitleOcclusionChange: (Float) -> Unit,
 ) {
     HorizontalPager(
         state = pagerState,
@@ -431,11 +441,13 @@ private fun MainTabPager(
         saveableStateHolder.SaveableStateProvider(tab) {
             MainTabContent(
                 tab = tab,
+                active = pagerState.currentPage == page,
                 uiState = uiState,
                 innerPadding = innerPadding,
                 onOpenAccount = onOpenAccount,
                 onOpenTransactionEdit = onOpenTransactionEdit,
                 onSelectLedger = onSelectLedger,
+            onTitleOcclusionChange = onTitleOcclusionChange,
             )
         }
     }
@@ -452,13 +464,17 @@ private fun MainTabContent(
     onOpenAccount: (Long) -> Unit,
     onOpenTransactionEdit: (Long) -> Unit,
     onSelectLedger: (Long) -> Unit,
+    onTitleOcclusionChange: (Float) -> Unit,
+    active: Boolean = true,
 ) {
     when (tab) {
         MainTab.HOME -> HomeScreen(
+            active = active,
             uiState = uiState,
             innerPadding = innerPadding,
             onOpenAccount = onOpenAccount,
             onSelectLedger = onSelectLedger,
+            onTitleOcclusionChange = onTitleOcclusionChange,
         )
 
         MainTab.DETAILS -> DetailsScreen(
@@ -480,9 +496,10 @@ private fun MainTabContent(
 @Composable
 internal fun AccountingBlurTopBar(
     backdrop: LayerBackdrop,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    Box {
+    Box(modifier) {
         Box(
             modifier = Modifier
                 .matchParentSize()

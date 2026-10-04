@@ -9,21 +9,14 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -34,9 +27,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.imageResource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -46,16 +37,9 @@ import com.vos.accounting.model.AccountType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
-import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
-import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Photos
 import top.yukonga.miuix.kmp.squircle.squircleBackground
 import top.yukonga.miuix.kmp.squircle.squircleClip
@@ -235,7 +219,6 @@ fun AccountIconScreen(
     onSelect: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val scrollBehavior = MiuixScrollBehavior()
     val customIconLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -247,62 +230,23 @@ fun AccountIconScreen(
             onSelect("$ACCOUNT_ICON_CUSTOM_PREFIX$it")
         }
     }
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            AccountingBlurTopBar(backdrop = backdrop) {
-                TopAppBar(
-                    title = "账户图标",
-                    color = Color.Transparent,
-                    navigationIcon = {
-                        IconButton(onClick = onBack, minWidth = 35.dp, minHeight = 35.dp) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
-                        }
-                    },
-                    actions = {
-                        TopBarIconAction(MiuixIcons.Photos, "自定义账户图标") {
-    customIconLauncher.launch(arrayOf("image/*"))
-                        }
-                    },
-                    scrollBehavior = scrollBehavior,
-                    actionIconPadding = TOP_BAR_ACTION_END_PADDING,
-                )
+    SecondaryScaffold(
+        title = "账户图标",
+        backdrop = backdrop,
+        onBack = onBack,
+        actions = {
+            TopBarIconAction(MiuixIcons.Photos, "自定义账户图标") {
+                customIconLauncher.launch(arrayOf("image/*"))
             }
         },
     ) { innerPadding ->
-        val layoutDirection = LocalLayoutDirection.current
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .layerBackdrop(backdrop)
-                .padding(
-                    start = innerPadding.calculateStartPadding(layoutDirection),
-                    end = innerPadding.calculateEndPadding(layoutDirection),
-                ),
-        ) {
-            LazyColumn(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .widthIn(max = 800.dp)
-                    .fillMaxSize()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
-            ) {
-                item { Spacer(modifier = Modifier.height(12.dp)) }
-                accountIconSections.forEach { section ->
-                    item(key = section.title) {
-                        AccountIconSectionCard(
-                            section = section,
-                            selectedKey = selectedKey,
-                            onSelect = onSelect,
-                        )
-                    }
-                }
-                item {
-                    Spacer(
-                        modifier = Modifier
-                            .height(24.dp)
-                            .navigationBarsPadding(),
+        SecondaryList(innerPadding = innerPadding) {
+            accountIconSections.forEach { section ->
+                item(key = section.title) {
+                    AccountIconSectionCard(
+                        section = section,
+                        selectedKey = selectedKey,
+                        onSelect = onSelect,
                     )
                 }
             }

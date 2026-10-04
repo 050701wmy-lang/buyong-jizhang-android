@@ -23,6 +23,7 @@ import com.vos.accounting.model.NotificationPrivacyMode
 import com.vos.accounting.model.PaymentProvider
 import com.vos.accounting.model.TransactionSource
 import com.vos.accounting.model.TransactionType
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.flow.Flow
 
@@ -271,6 +272,9 @@ data class AppSettingsEntity(
     val followSystemColor: Boolean = false,
     @ColumnInfo(name = "predictive_back_animation_enabled", defaultValue = "0")
     val predictiveBackAnimationEnabled: Boolean = false,
+    @ColumnInfo(name = "ledger_animation", defaultValue = "'stack'")
+    @SerialName("ledger_animation")
+    val ledgerAnimation: String = "stack",
     @ColumnInfo(name = "colored_transaction_amounts_enabled", defaultValue = "0")
     val coloredTransactionAmountsEnabled: Boolean = false,
     @ColumnInfo(name = "current_ledger_id", defaultValue = "1")
@@ -790,6 +794,10 @@ interface AccountingDao {
      */
     @Query("UPDATE app_settings SET predictive_back_animation_enabled = :enabled WHERE id = 1")
     suspend fun updatePredictiveBackAnimationEnabled(enabled: Boolean)
+
+    /** 保存首页账本切换效果。 */
+    @Query("UPDATE app_settings SET ledger_animation = :animation WHERE id = 1")
+    suspend fun updateLedgerAnimation(animation: String)
 
     /** 只更新收支金额是否使用红绿字体。 */
     @Query("UPDATE app_settings SET colored_transaction_amounts_enabled = :enabled WHERE id = 1")
@@ -1792,7 +1800,7 @@ interface AccountingDao {
         AutoAiCredentialEntity::class,
         AppSettingsEntity::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = true,
 )
 abstract class AccountingDatabase : RoomDatabase() {
@@ -1831,6 +1839,7 @@ abstract class AccountingDatabase : RoomDatabase() {
             MIGRATION_19_20,
             MIGRATION_20_21,
             MIGRATION_21_22,
+            MIGRATION_22_23,
         ).build()
 
         internal val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2739,6 +2748,16 @@ abstract class AccountingDatabase : RoomDatabase() {
                         updated_at INTEGER NOT NULL
                     )
                     """.trimIndent(),
+                )
+            }
+        }
+
+        /** 为既有用户保留叠层效果并增加账本动画设置。 */
+        internal val MIGRATION_22_23 = object : Migration(22, 23) {
+            /** 增加账本动画列且不改变当前账本。 */
+            override fun migrate(connection: SQLiteConnection) {
+                connection.executeMigrationSql(
+                    "ALTER TABLE app_settings ADD COLUMN ledger_animation TEXT NOT NULL DEFAULT 'stack'",
                 )
             }
         }

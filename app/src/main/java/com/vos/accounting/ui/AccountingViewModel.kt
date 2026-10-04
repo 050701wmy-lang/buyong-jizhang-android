@@ -64,6 +64,7 @@ data class AccountingUiState(
     val themeMode: AccountingThemeMode = AccountingThemeMode.SYSTEM,
     val followSystemColor: Boolean = false,
     val predictiveBackAnimationEnabled: Boolean = false,
+    val ledgerAnimation: String = "stack",
     val coloredTransactionAmountsEnabled: Boolean = false,
     val autoBookkeepingEnabled: Boolean = false,
     val autoBookkeepingWechatEnabled: Boolean = true,
@@ -162,6 +163,7 @@ class AccountingViewModel(
             } ?: AccountingThemeMode.SYSTEM,
             followSystemColor = settings?.followSystemColor ?: false,
             predictiveBackAnimationEnabled = settings?.predictiveBackAnimationEnabled ?: false,
+            ledgerAnimation = settings?.ledgerAnimation ?: "stack",
             coloredTransactionAmountsEnabled = settings?.coloredTransactionAmountsEnabled ?: false,
             autoBookkeepingEnabled = settings?.autoBookkeepingEnabled ?: false,
             autoBookkeepingWechatEnabled = settings?.autoBookkeepingWechatEnabled ?: true,
@@ -228,6 +230,11 @@ class AccountingViewModel(
         viewModelScope.launch {
             repository.updatePredictiveBackAnimationEnabled(enabled)
         }
+    }
+
+    /** 保存用户选中的账本动画。 */
+    fun updateLedgerAnimation(animation: String) {
+        viewModelScope.launch { repository.updateLedgerAnimation(animation) }
     }
 
     /** 更新普通收支金额是否使用红绿字体。 */

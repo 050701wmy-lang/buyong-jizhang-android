@@ -116,6 +116,10 @@ data class AccountIconRoute(
 @Serializable
 data object SettingsRoute : AccountingRoute
 
+/** 表示账本切换动画的动态预览与选择页面。 */
+@Serializable
+data object LedgerAnimationRoute : AccountingRoute
+
 /** 表示数据备份与恢复二级页面。 */
 @Serializable
 data object BackupRoute : AccountingRoute
@@ -454,6 +458,7 @@ fun AccountingApp(
                             onBack = { backStack.removeAt(backStack.lastIndex) },
                             onOpenAutoBookkeeping = { navigateTo(AutoBookkeepingSettingsRoute) },
                             onOpenBackup = { navigateTo(BackupRoute) },
+                            onOpenLedgerAnimation = { navigateTo(LedgerAnimationRoute) },
                             onThemeModeChange = viewModel::updateThemeMode,
                             onFollowSystemColorChange = viewModel::updateFollowSystemColor,
                             onPredictiveBackAnimationEnabledChange =
@@ -462,6 +467,14 @@ fun AccountingApp(
                                 viewModel::updateColoredTransactionAmountsEnabled,
                             onXiaomiSuperIslandEnabledChange =
                                 viewModel::updateXiaomiSuperIslandEnabled,
+                        )
+                    }
+                    entry<LedgerAnimationRoute> {
+                        LedgerAnimationScreen(
+                            selectedAnimation = uiState.ledgerAnimation,
+                            backdrop = backdrop,
+                            onBack = navigateBack,
+                            onSelect = viewModel::updateLedgerAnimation,
                         )
                     }
                     entry<AutoBookkeepingSettingsRoute> {

@@ -2,31 +2,18 @@ package com.vos.accounting.ui
 
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.calculateEndPadding
-import androidx.compose.foundation.layout.calculateStartPadding
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.vos.accounting.data.AccountTypeEntity
@@ -36,17 +23,11 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.BasicComponentDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
-import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Add
-import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.icon.extended.Ok
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
@@ -73,84 +54,44 @@ fun AccountTypeScreen(
     val editingType = accountTypes.firstOrNull { it.key == editingTypeKey }
     val managedType = accountTypes.firstOrNull { it.key == managedTypeKey }
     val typeToDelete = accountTypes.firstOrNull { it.key == typeToDeleteKey }
-    val scrollBehavior = MiuixScrollBehavior()
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            AccountingBlurTopBar(backdrop = backdrop) {
-                TopAppBar(
-                    title = "选择账户类型",
-                    color = Color.Transparent,
-                    navigationIcon = {
-                        IconButton(onClick = onBack, minWidth = 35.dp, minHeight = 35.dp) {
-                            Icon(imageVector = MiuixIcons.Back, contentDescription = "返回")
-                        }
-                    },
-                    actions = {
-                        TopBarIconAction(MiuixIcons.Add, "自定义账户类型") {
-                            editingTypeKey = null
-                            showEditor = true
-                        }
-                    },
-                    scrollBehavior = scrollBehavior,
-                    actionIconPadding = TOP_BAR_ACTION_END_PADDING,
-                )
+    SecondaryScaffold(
+        title = "选择账户类型",
+        backdrop = backdrop,
+        onBack = onBack,
+        actions = {
+            TopBarIconAction(MiuixIcons.Add, "自定义账户类型") {
+                editingTypeKey = null
+                showEditor = true
             }
         },
     ) { innerPadding ->
-        val layoutDirection = LocalLayoutDirection.current
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .layerBackdrop(backdrop)
-                .padding(
-                    start = innerPadding.calculateStartPadding(layoutDirection),
-                    end = innerPadding.calculateEndPadding(layoutDirection),
-                ),
-        ) {
-            LazyColumn(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .widthIn(max = 800.dp)
-                    .fillMaxSize()
-                    .nestedScroll(scrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(top = innerPadding.calculateTopPadding()),
-            ) {
-                item { Spacer(modifier = Modifier.height(12.dp)) }
-                item {
-                    AccountSectionTitle("预置类型")
-                }
+        SecondaryList(innerPadding = innerPadding) {
+            item {
+                AccountSectionTitle("预置类型")
+            }
+            item {
+                AccountTypeCard(
+                    accountTypes = accountTypes.filter(AccountTypeEntity::isBuiltin),
+                    selectedKey = selectedKey,
+                    onSelect = onSelect,
+                    onLongClick = { managedTypeKey = it.key },
+                )
+            }
+            item {
+                AccountSectionTitle("自定义类型")
+            }
+            if (accountTypes.any { !it.isBuiltin }) {
                 item {
                     AccountTypeCard(
-                        accountTypes = accountTypes.filter(AccountTypeEntity::isBuiltin),
+                        accountTypes = accountTypes.filterNot(AccountTypeEntity::isBuiltin),
                         selectedKey = selectedKey,
                         onSelect = onSelect,
                         onLongClick = { managedTypeKey = it.key },
                     )
                 }
+            } else {
                 item {
-                    AccountSectionTitle("自定义类型")
-                }
-                if (accountTypes.any { !it.isBuiltin }) {
-                    item {
-                        AccountTypeCard(
-                            accountTypes = accountTypes.filterNot(AccountTypeEntity::isBuiltin),
-                            selectedKey = selectedKey,
-                            onSelect = onSelect,
-                            onLongClick = { managedTypeKey = it.key },
-                        )
-                    }
-                } else {
-                    item {
-                        EmptyCard(text = "暂无自定义类型")
-                    }
-                }
-                item {
-                    Spacer(
-                        modifier = Modifier
-                            .height(24.dp)
-                            .navigationBarsPadding(),
-                    )
+                    EmptyCard(text = "暂无自定义类型")
                 }
             }
         }

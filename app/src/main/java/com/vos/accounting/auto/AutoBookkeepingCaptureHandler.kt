@@ -19,21 +19,7 @@ class AutoBookkeepingCaptureHandler(context: Context) {
     )
 
     /** 使用声明式规则和可选私有 AI 解析临时文本，未匹配时不产生空草稿。 */
-    suspend fun handle(input: RuleInput): Boolean {
-        val deterministic = ruleEngine.parse(input)
-        val shouldUseAi = deterministic == null || deterministic.merchant.isBlank() ||
-            deterministic.paymentMethodKey.isBlank()
-        val aiCapture = if (shouldUseAi) {
-            paymentProviderForPackage(input.packageName)?.let { provider ->
-                aiClient.parse(provider, input.occurredAt, input.textParts)
-            }
-        } else {
-            null
-        }
-        val capture = mergeAiCapture(deterministic, aiCapture) ?: return false
-        handle(capture)
-        return true
-    }
+    suspend fun handle(input: RuleInput): Boolean = handleParsed(input, parseRules(input))
 
     /** 仅执行声明式规则，供 OCR 前置顺序判断使用。 */
     suspend fun parseRules(input: RuleInput): AutoBookkeepingCapture? = ruleEngine.parse(input)
